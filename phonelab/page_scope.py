@@ -323,6 +323,8 @@ class PageImageLocatedClickExperiment(_PageImageLocatedActionExperiment):
 
 class PageImageLocatedScrollExperiment(_PageImageLocatedActionExperiment):
     """One small wheel action while the pointer is image-verified on a probe."""
+    max_vertical_delta = 3
+
     def __init__(self, *args, probe_id, expected_count, **kwargs):
         if (not isinstance(probe_id, str) or probe_id not in {f'{n:02d}' for n in range(1, 26)}
                 or type(expected_count) is not int or not 0 <= expected_count <= 999999):
@@ -330,9 +332,15 @@ class PageImageLocatedScrollExperiment(_PageImageLocatedActionExperiment):
         super().__init__(*args, probe_id=probe_id, expected_count=expected_count, **kwargs)
 
     def scroll(self, vertical):
-        if type(vertical) is not int or vertical == 0 or not -3 <= vertical <= 3:
-            raise PageScopeError('one nonzero vertical wheel action of at most 3 is required')
+        if (type(vertical) is not int or vertical == 0
+                or not -self.max_vertical_delta <= vertical <= self.max_vertical_delta):
+            raise PageScopeError(f'one nonzero vertical wheel action of at most {self.max_vertical_delta} is required')
         return self._execute_one('scroll', {'v': vertical, 'h': 0})
+
+
+class PageImageLocatedPageScrollExperiment(PageImageLocatedScrollExperiment):
+    """One bounded wheel-magnitude experiment on the current synthetic page."""
+    max_vertical_delta = 16
 
 
 class PageImageLocatedTextExperiment(_PageImageLocatedActionExperiment):

@@ -18,7 +18,8 @@ from phonelab.iphone import read_target_binding
 from phonelab.live_observation import BASE_URL, LiveObservationClient
 from phonelab.page_scope import (PageMovementExperiment, PageObservedClickExperiment,
                                  PageObservedScrollExperiment, PageImageLocatedClickExperiment,
-                                 PageImageLocatedScrollExperiment, windows_input_lease)
+                                 PageImageLocatedScrollExperiment, PageImageLocatedPageScrollExperiment,
+                                 windows_input_lease)
 from phonelab.visual_marker import decode_visual_marker
 from phonelab.stop_signal import StopStore
 
@@ -68,7 +69,7 @@ def _validate_request(operation, *, dx=None, dy=None, pointer_seq=None, vertical
         if type(pointer_seq) is not int or pointer_seq < 1:
             raise ValueError("click requires the current positive pointer event sequence")
         return {"pointer_seq": pointer_seq}
-    if operation in {'image-click', 'image-scroll'}:
+    if operation in {'image-click', 'image-scroll', 'image-page-scroll'}:
         if (not isinstance(probe_id, str) or probe_id not in {f'{n:02d}' for n in range(1, 26)}
                 or type(expected_count) is not int or not 0 <= expected_count <= 999999
                 or any(value is not None for value in (dx, dy, pointer_seq))):
@@ -77,7 +78,10 @@ def _validate_request(operation, *, dx=None, dy=None, pointer_seq=None, vertical
             if vertical is not None:
                 raise ValueError('image-click accepts no wheel delta')
             return {'probe_id': probe_id, 'expected_count': expected_count}
-        if type(vertical) is not int or vertical == 0 or not -3 <= vertical <= 3:
+        maximum = 16 if operation == 'image-page-scroll' else 3
+        if type(vertical) is not int or vertical == 0 or not -maximum <= vertical <= maximum:
+            if operation == 'image-page-scroll':
+                raise ValueError('image-page-scroll requires a vertical delta within 1..16')
             raise ValueError('image-scroll requires a vertical delta within 1..3')
         return {'probe_id': probe_id, 'expected_count': expected_count, 'vertical': vertical}
     if operation == "scroll":
@@ -272,7 +276,7 @@ def run_experiment(operation, *, dx=None, dy=None, pointer_seq=None, vertical=No
         elif operation == "click":
             experiment = PageObservedClickExperiment(recording, **common)
             result = experiment.click(arguments["pointer_seq"])
-        elif operation in {'image-click', 'image-scroll'}:
+        elif operation in {'image-click', 'image-scroll', 'image-page-scroll'}:
             from phonelab.image_probe_guard import ImageProbeGuard
             from phonelab.local_ocr import read_probe_ocr
             image = evidence / 'page-association.png'
@@ -286,8 +290,12 @@ def run_experiment(operation, *, dx=None, dy=None, pointer_seq=None, vertical=No
                 experiment = PageImageLocatedClickExperiment(recording, image_guard=guard,
                     expected_count=arguments['expected_count'], probe_id=arguments['probe_id'], **common)
                 result = experiment.click()
-            else:
+            elif operation == 'image-scroll':
                 experiment = PageImageLocatedScrollExperiment(recording, image_guard=guard,
+                    expected_count=arguments['expected_count'], probe_id=arguments['probe_id'], **common)
+                result = experiment.scroll(arguments['vertical'])
+            else:
+                experiment = PageImageLocatedPageScrollExperiment(recording, image_guard=guard,
                     expected_count=arguments['expected_count'], probe_id=arguments['probe_id'], **common)
                 result = experiment.scroll(arguments['vertical'])
         elif operation == "scroll":
@@ -357,7 +365,7 @@ def run_experiment(operation, *, dx=None, dy=None, pointer_seq=None, vertical=No
 def _parser():
     parser = argparse.ArgumentParser(description="One-shot synthetic-page BLE experiment; no general input")
     sub = parser.add_subparsers(dest="operation", required=True)
-    for name in ("observe", "move", "click", "image-click", "scroll", "image-scroll"):
+    for name in ("observe", "move", "click", "image-click", "scroll", "image-scroll", "image-page-scroll"):
         command = sub.add_parser(name)
         command.add_argument("--test-id", choices=(TEST_ID,), default=TEST_ID)
         command.add_argument("--seed", choices=(SEED,), default=SEED)
@@ -366,10 +374,10 @@ def _parser():
             command.add_argument("--dy", type=int, required=True)
         elif name == "click":
             command.add_argument("--pointer-seq", type=int, required=True)
-        elif name in {'image-click', 'image-scroll'}:
+        elif name in {'image-click', 'image-scroll', 'image-page-scroll'}:
             command.add_argument('--probe-id', choices=tuple(f'{n:02d}' for n in range(1, 26)), required=True)
             command.add_argument('--expected-count', type=int, required=True)
-            if name == 'image-scroll':
+            if name in {'image-scroll', 'image-page-scroll'}:
                 command.add_argument('--vertical', type=int, required=True)
         elif name == "scroll":
             command.add_argument("--pointer-seq", type=int, required=True)

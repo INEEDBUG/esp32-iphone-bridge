@@ -715,3 +715,72 @@ def test_image_scroll_stop_after_backend_open_cancels_final_guard_before_wire():
         scroll.scroll(1)
     assert len(checks) == 1 and opened == [True]
     assert not backend.calls and backend.closed == 1
+
+
+def test_image_page_scroll_allows_bounded_delta_and_sends_only_one_scroll_after_guard():
+    from phonelab.page_scope import PageImageLocatedPageScrollExperiment
+    movement, observer, backend, opened = setup()
+    checks = []
+    transport = []
+    class Guard:
+        def verify(self, png):
+            assert transport == ["hello"]
+            checks.append(png)
+            return {"probe_id": "10", "count": 2}
+    scroll = PageImageLocatedPageScrollExperiment(observer, target=movement.target,
+        run_id=movement.run_id, nonce=movement.nonce, test_id=movement.test_id,
+        backend_opener=movement.backend_opener, lease_factory=movement.lease_factory,
+        cancel_token=movement.cancel_token, clock=movement.clock, sleep=movement.sleep,
+        image_guard=Guard(), probe_id="10", expected_count=2)
+    def execute(request):
+        transport.append("hello")
+        request["_pre_input_guard"]()
+        transport.append("scroll")
+        backend.calls.append(request)
+        return {"state": "executed", "ble_connected": True}
+    backend.execute = execute
+    result = scroll.scroll(-16)
+    assert result["verified"] is False and result["op"] == "scroll"
+    assert transport == ["hello", "scroll"] and len(checks) == 1
+    assert backend.calls[0]["args"] == {"v": -16, "h": 0}
+    assert backend.calls[0]["_dispatch_ttl_seconds"] == 1
+    assert backend.closed == 1
+
+
+@pytest.mark.parametrize("vertical", [0, 17, -17, True])
+def test_image_page_scroll_rejects_invalid_delta_before_backend_open(vertical):
+    from phonelab.page_scope import PageImageLocatedPageScrollExperiment
+    movement, observer, backend, opened = setup()
+    class Guard:
+        def verify(self, png): return {"probe_id": "10", "count": 2}
+    scroll = PageImageLocatedPageScrollExperiment(observer, target=movement.target,
+        run_id=movement.run_id, nonce=movement.nonce, test_id=movement.test_id,
+        backend_opener=movement.backend_opener, lease_factory=movement.lease_factory,
+        cancel_token=movement.cancel_token, clock=movement.clock, sleep=movement.sleep,
+        image_guard=Guard(), probe_id="10", expected_count=2)
+    with pytest.raises(PageScopeError): scroll.scroll(vertical)
+    assert not opened and not backend.calls
+
+
+@pytest.mark.parametrize("fault", ["wrong_count", "expired"])
+def test_image_page_scroll_final_guard_failure_prevents_requested_scroll(fault):
+    from phonelab.page_scope import PageImageLocatedPageScrollExperiment
+    movement, observer, backend, opened = setup()
+    calls = []
+    class Guard:
+        def verify(self, png):
+            calls.append(png)
+            if fault == "expired": observer.clock.sleep(2.1)
+            return {"probe_id": "10", "count": 3 if fault == "wrong_count" else 2}
+    scroll = PageImageLocatedPageScrollExperiment(observer, target=movement.target,
+        run_id=movement.run_id, nonce=movement.nonce, test_id=movement.test_id,
+        backend_opener=movement.backend_opener, lease_factory=movement.lease_factory,
+        cancel_token=movement.cancel_token, clock=movement.clock, sleep=movement.sleep,
+        image_guard=Guard(), probe_id="10", expected_count=2)
+    def execute(request):
+        request["_pre_input_guard"]()
+        backend.calls.append(request)
+        return {"state": "executed", "ble_connected": True}
+    backend.execute = execute
+    with pytest.raises(PageScopeError): scroll.scroll(16)
+    assert len(calls) == 1 and not backend.calls and backend.closed == 1
