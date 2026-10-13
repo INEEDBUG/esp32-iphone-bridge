@@ -260,6 +260,10 @@ def run_trials(probes, rounds, *, execute, initial_image, initial_ocr, run_conte
     if execute and click_mode == "image" and initial_summary is not None and (
             type(initial_summary) is not int or initial_summary < 0):
         raise ValueError("synthetic click summary is malformed")
+    # OCR can temporarily miss the page summary when the cursor covers it.
+    # Preserve the expected total across missing frames; only a separately
+    # verified click can advance it.
+    expected_summary_clicks = initial_summary
     current_ocr = initial_ocr
     current_image = Path(initial_image)
     action_count = 0
@@ -355,10 +359,17 @@ def run_trials(probes, rounds, *, execute, initial_image, initial_ocr, run_conte
                     if operation == "move":
                         move_counts[probe_id] += 1
                         events = _validate_run_events(observer.events(run_context["run_id"]), run_context)
+                        summary_changed = (after_summary != prior_summary_clicks)
+                        if click_mode == "image":
+                            summary_changed = (after_summary is not None
+                                and expected_summary_clicks is not None
+                                and after_summary != expected_summary_clicks)
                         if (events is None or not _event_delta_has_no_click(before_rows, events, run_context)
                                 or after_row[0]["count"] != prior_target_count
-                                or after_ocr["summary_clicks"] != prior_summary_clicks):
+                                or summary_changed):
                             raise RuntimeError("unexplained page change followed a movement")
+                        if after_summary is not None:
+                            expected_summary_clicks = after_summary
                         current_image, current_ocr = after_image, after_ocr
                         continue
 
@@ -368,6 +379,13 @@ def run_trials(probes, rounds, *, execute, initial_image, initial_ocr, run_conte
                         raise RuntimeError("independent trusted click event did not match selected probe")
                     if after_row[0]["count"] not in (initial_count, initial_count + 1):
                         raise RuntimeError("click count changed unexpectedly")
+                    if (click_mode == "image" and after_summary is not None
+                            and expected_summary_clicks is not None):
+                        if after_summary not in (expected_summary_clicks, expected_summary_clicks + 1):
+                            raise RuntimeError("synthetic click summary changed unexpectedly")
+                        if (after_summary == expected_summary_clicks + 1
+                                and after_ocr.get("summary_last") != probe_id):
+                            raise RuntimeError("page last-click summary names a different probe")
                     delayed_count = None
                     for poll in range(click_verify_polls):
                         if stop_token.is_set() or clock() >= deadline:
@@ -390,7 +408,7 @@ def run_trials(probes, rounds, *, execute, initial_image, initial_ocr, run_conte
                             raise RuntimeError("delayed synthetic click summary is malformed")
                         if delayed_count == initial_count + 1:
                             summary_verified = None
-                            baseline_summary = prior_summary_clicks
+                            baseline_summary = expected_summary_clicks
                             if delayed_summary is not None:
                                 if delayed_ocr.get("summary_last") != probe_id:
                                     raise RuntimeError("page last-click summary names a different probe")
@@ -401,6 +419,14 @@ def run_trials(probes, rounds, *, execute, initial_image, initial_ocr, run_conte
                             elif click_mode == "pointer-event" and delayed_summary is None:
                                 raise RuntimeError("visible synthetic click summary is unavailable")
                             summary_states.append(summary_verified)
+                            if delayed_summary is not None:
+                                expected_summary_clicks = delayed_summary
+                            elif expected_summary_clicks is not None:
+                                # The target count and trusted click event
+                                # independently verified the action, so carry
+                                # the expected total forward even if OCR missed
+                                # the summary in this delayed frame.
+                                expected_summary_clicks += 1
                             current_image, current_ocr = delayed_path, delayed_ocr
                             counts[probe_id] = delayed_count
                             delayed_baseline = initial_count

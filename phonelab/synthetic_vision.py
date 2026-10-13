@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import io
 import math
 
-from PIL import Image, ImageCms, ImageFilter
+from PIL import Image, ImageChops, ImageCms, ImageFilter, ImageMath
 
 from .visual_marker import VisualMarker
 
@@ -45,6 +45,27 @@ def _srgb_image(png):
         return None
 
 
+def _neutral_masks(image):
+    """Exact original RGB tests in Pillow's C operations, without Python pixel loops."""
+    red, green, blue = image.split()
+    maximum = ImageChops.lighter(ImageChops.lighter(red, green), blue)
+    minimum = ImageChops.darker(ImageChops.darker(red, green), blue)
+    neutral = ImageChops.subtract(maximum, minimum).point([int(i <= 24) for i in range(256)])
+    # Compare the integer RGB sum to avoid rounding average values at a band edge.
+    total = ImageMath.lambda_eval(lambda a: a['red'] + a['green'] + a['blue'],
+                                 red=red, green=green, blue=blue)
+    dark = ImageMath.lambda_eval(lambda a: (a['total'] >= 210) & (a['total'] < 660),
+                                total=total).convert('L')
+    light = ImageMath.lambda_eval(lambda a: (a['total'] >= 660) & (a['total'] <= 750),
+                                 total=total).convert('L')
+    masks = (ImageChops.darker(neutral, dark), ImageChops.darker(neutral, light))
+    for mask in masks:
+        mask.paste(0, (0, 0, image.width, min(160, image.height)))
+        if image.height > 1511:
+            mask.paste(0, (0, 1511, image.width, image.height))
+    return masks
+
+
 def detect_pointer(png: bytes, *, verified_marker: VisualMarker) -> PointerCandidate | None:
     """Return one compact neutral circular candidate, else UNKNOWN (None).
 
@@ -70,29 +91,23 @@ def detect_pointer(png: bytes, *, verified_marker: VisualMarker) -> PointerCandi
         return None
 
     width, height = image.size
-    pixels = image.load()
-    masks = (bytearray(width * height), bytearray(width * height))
-    for y in range(height):
-        row = y * width
-        for x in range(width):
-            red, green, blue = pixels[x, y]
-            gray = (red + green + blue) / 3
-            # Neutral filled regions cover both dark cursors on light pages and
-            # light cursors on dark pages; separating intensity bands prevents
-            # a cursor from joining an opposite-polarity page background.
-            if 160 <= y <= 1510 and max(red, green, blue) - min(red, green, blue) <= 24:
-                if 70 <= gray < 220:
-                    masks[0][row + x] = 1
-                elif 220 <= gray <= 250:
-                    masks[1][row + x] = 1
+    # Separate bands keep dark/light pointers apart from opposite-polarity
+    # backgrounds, using the same exact thresholds as the original pixel loop.
+    masks = _neutral_masks(image)
 
     candidates = []
     for mask in masks:
-        # Close only 1-2px gaps caused by thin UI borders crossing the same dot.
-        # The unchanged geometry/solidity tests below still reject line fragments.
-        mask = bytearray(Image.frombytes("L", image.size, bytes(mask))
-                         .filter(ImageFilter.MaxFilter(5))
-                         .filter(ImageFilter.MinFilter(5)).tobytes())
+        # First bridge 1-2px blue seams through a dot, then remove thin gray
+        # paragraph strokes touching it. Opening first can erase one side of a
+        # split dot and shift its center. Geometry/uniqueness remain unchanged.
+        mask = mask.filter(ImageFilter.MaxFilter(5)).filter(ImageFilter.MinFilter(5))
+        # Five square 3px erosions/dilations equal one square 11px operation,
+        # while Pillow's smaller rank filters finish well within frame expiry.
+        for _ in range(5):
+            mask = mask.filter(ImageFilter.MinFilter(3))
+        for _ in range(5):
+            mask = mask.filter(ImageFilter.MaxFilter(3))
+        mask = bytearray(mask.tobytes())
         seen = bytearray(width * height)
         for start, active in enumerate(mask):
             if not active or seen[start]:

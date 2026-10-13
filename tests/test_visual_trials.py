@@ -442,6 +442,147 @@ def test_image_click_mode_checks_visible_summary_delta_and_last_target(tmp_path)
     assert result["state"] == "stopped" and calls == ["image-click"]
 
 
+def _run_summary_transition_trial(tmp_path, summaries, *, inject_click_like=False):
+    observer = FakeObserver()
+    observer.rows = []
+    calls = []
+    token = FakeStopToken()
+    reads = {"n": 0}
+    initial = tmp_path / "summary-transition-initial.png"
+    initial.write_bytes(b"initial")
+    target = {"id": "01", "count": 0,
+              "image_text_bounds": {"x": 100, "y": 300, "width": 80, "height": 20}}
+    initial_ocr = {"status": "OK", "summary_clicks": 0, "summary_last": "none",
+                   "visible_probes": [target]}
+
+    def action(operation, **kwargs):
+        calls.append(operation)
+        assert kwargs["stop_token"] is token
+        if operation == "image-click":
+            observer.rows.extend([
+                {"seq": seq, "source": "client_reported_browser_event", "run_id": "0123456789abcdef",
+                 "test_id": "ble-round-01", "recorded_monotonic": 10.,
+                 "event": {"type": name, "isTrusted": True, "target": "01"}}
+                for seq, name in enumerate(("pointerdown", "pointerup", "click"), start=1)])
+        elif inject_click_like:
+            observer.rows.append({"seq": 1, "source": "client_reported_browser_event",
+                "run_id": "0123456789abcdef", "test_id": "ble-round-01",
+                "recorded_monotonic": 10.,
+                "event": {"type": "pointerdown", "isTrusted": True, "target": "01"}})
+        return make_evidence(tmp_path, len(calls), operation=operation)
+
+    def read_ocr(_path, _nonce):
+        reads["n"] += 1
+        # Each move's after-frame gets the next configured summary. The click
+        # after-frame preserves the last configured value; delayed capture
+        # proves the one expected increment.
+        if reads["n"] <= len(summaries):
+            summary = summaries[reads["n"] - 1]
+            count = 0
+        elif reads["n"] == len(summaries) + 1:
+            summary = summaries[-1] if summaries[-1] is not None else 0
+            count = 0
+        else:
+            summary = ((summaries[-1] if summaries[-1] is not None else 0) + 1)
+            count = 1
+        return {"status": "PARTIAL" if summary is None else "OK",
+                "summary_clicks": summary, "summary_last": "01" if count else "none",
+                "visible_probes": [{**target, "count": count}]}
+
+    pointer_calls = {"n": 0}
+    def pointer(_png, _nonce):
+        pointer_calls["n"] += 1
+        # First two plans request a small vertical move; the next plan is at goal.
+        return (SimpleNamespace(center_x=140., center_y=250.) if pointer_calls["n"] == 1
+                else SimpleNamespace(center_x=140., center_y=280.) if pointer_calls["n"] == 2
+                else SimpleNamespace(center_x=140., center_y=342.))
+
+    result = run_trials(["01"], 1, execute=True, initial_image=initial, initial_ocr=initial_ocr,
+        run_context={"run_id": "0123456789abcdef", "nonce": "nonce", "test_id": "ble-round-01",
+                     "seed": "42", "target": "iphone-abc"}, observer=observer,
+        experiment=action, ocr_reader=read_ocr, pointer_fn=pointer, stop_token=token,
+        evidence_root=tmp_path / "summary-transition", clock=lambda: 10., sleep=lambda _: None,
+        snapshot_validator=lambda snapshot, **kwargs: snapshot, click_mode="image",
+        click_verify_polls=1)
+    return result, calls
+
+
+def test_image_mode_retains_known_summary_across_temporary_unreadability(tmp_path):
+    result, calls = _run_summary_transition_trial(tmp_path, [None, 0])
+    assert result["state"] == "completed" and result["verified_clicks"] == 1
+    assert calls == ["move", "move", "image-click"]
+
+
+def test_image_mode_aborts_when_summary_reappears_changed_before_click(tmp_path):
+    result, calls = _run_summary_transition_trial(tmp_path, [None, 2])
+    assert result["state"] == "stopped"
+    assert calls == ["move", "move"]
+
+
+def test_image_mode_blocks_click_like_event_during_movement(tmp_path):
+    result, calls = _run_summary_transition_trial(tmp_path, [0], inject_click_like=True)
+    assert result["state"] == "stopped"
+    assert calls == ["move"]
+
+
+def test_image_mode_rejects_malformed_summary_during_movement(tmp_path):
+    result, calls = _run_summary_transition_trial(tmp_path, ["not-a-count"])
+    assert result["state"] == "stopped"
+    assert calls == ["move"]
+
+
+def test_image_mode_advances_known_summary_after_verified_click_even_when_delayed_ocr_misses_it(tmp_path):
+    observer = FakeObserver()
+    observer.rows = []
+    calls = []
+    token = FakeStopToken()
+    reads = {"n": 0}
+    initial = tmp_path / "two-rounds-initial.png"
+    initial.write_bytes(b"initial")
+    probe = {"id": "01", "count": 0,
+             "image_text_bounds": {"x": 100, "y": 300, "width": 80, "height": 20}}
+
+    def action(operation, **kwargs):
+        calls.append(operation)
+        assert operation == "image-click" and kwargs["stop_token"] is token
+        start = len(observer.rows) + 1
+        observer.rows.extend([
+            {"seq": seq, "source": "client_reported_browser_event", "run_id": "0123456789abcdef",
+             "test_id": "ble-round-01", "recorded_monotonic": 10.,
+             "event": {"type": name, "isTrusted": True, "target": "01"}}
+            for seq, name in enumerate(("pointerdown", "pointerup", "click"), start=start)])
+        return make_evidence(tmp_path, len(calls), operation=operation)
+
+    def read_ocr(_path, _nonce):
+        reads["n"] += 1
+        # First action: immediate summary is 0, then delayed target count
+        # advances while summary is occluded. Second action: summary 1 is
+        # readable again, then the second click advances it to 2.
+        states = [
+            (0, 0, "none"),
+            (1, None, None),
+            (1, 1, "01"),
+            (2, 2, "01"),
+        ]
+        target_count, summary_count, summary_last = states[reads["n"] - 1]
+        return {"status": "PARTIAL" if summary_count is None else "OK",
+                "summary_clicks": summary_count, "summary_last": summary_last,
+                "visible_probes": [{**probe, "count": target_count}]}
+
+    result = run_trials(["01"], 2, execute=True, initial_image=initial,
+        initial_ocr={"status": "OK", "summary_clicks": 0, "summary_last": "none",
+                     "visible_probes": [probe]},
+        run_context={"run_id": "0123456789abcdef", "nonce": "nonce", "test_id": "ble-round-01",
+                     "seed": "42", "target": "iphone-abc"}, observer=observer,
+        experiment=action, ocr_reader=read_ocr,
+        pointer_fn=lambda *_: SimpleNamespace(center_x=140., center_y=342.),
+        stop_token=token, evidence_root=tmp_path / "two-rounds", clock=lambda: 10.,
+        sleep=lambda _: None, snapshot_validator=lambda snapshot, **kwargs: snapshot,
+        click_mode="image", click_verify_polls=1)
+    assert result["state"] == "completed" and result["verified_clicks"] == 2
+    assert calls == ["image-click", "image-click"]
+
+
 def test_image_click_option_is_explicit_and_does_not_imply_execution():
     assert visual_trials._parser().parse_args(["--image-clicks"]).image_clicks is True
     assert visual_trials._parser().parse_args([]).image_clicks is False

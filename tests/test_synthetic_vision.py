@@ -1,6 +1,6 @@
 import io
 
-from PIL import Image, ImageCms, ImageDraw
+from PIL import Image, ImageCms, ImageDraw, ImageFont
 import pytest
 
 from phonelab.synthetic_vision import detect_pointer
@@ -123,3 +123,46 @@ def test_small_blue_seams_do_not_split_one_gray_pointer_into_unknown_fragments()
     assert abs(result.center_x - 288) <= 1
     assert abs(result.center_y - 1246) <= 1
     assert 34 <= result.diameter <= 40
+
+
+def gray_paragraph(*, cursor=True, second_cursor=False):
+    image = Image.new("RGB", (828, 1792), (255, 255, 255))
+    draw = ImageDraw.Draw(image)
+    draw.text((200, 1073), "reports its own event fields", font=ImageFont.load_default(size=32),
+              fill=(105, 109, 116))
+    if cursor:
+        draw.ellipse((395, 1081, 433, 1119), fill=(160, 162, 165))
+    if second_cursor:
+        draw.ellipse((600, 1081, 638, 1119), fill=(160, 162, 165))
+    out = io.BytesIO()
+    image.save(out, format="PNG")
+    return out.getvalue()
+
+
+def test_gray_pointer_remains_localizable_when_thin_gray_paragraph_strokes_touch_it():
+    result = detect_pointer(gray_paragraph(), verified_marker=MARKER)
+    assert result is not None
+    assert abs(result.center_x - 414) <= 3
+    assert abs(result.center_y - 1100) <= 3
+    assert 32 <= result.diameter <= 44
+
+
+def test_removing_gray_text_strokes_does_not_create_a_pointer_or_hide_a_second_one():
+    assert detect_pointer(gray_paragraph(cursor=False), verified_marker=MARKER) is None
+    assert detect_pointer(gray_paragraph(second_cursor=True), verified_marker=MARKER) is None
+
+
+def test_neutral_mask_keeps_exact_color_band_and_safe_vertical_boundaries():
+    from phonelab.synthetic_vision import _neutral_masks
+    colors = [(69, 69, 69), (70, 70, 70), (219, 220, 220), (220, 220, 220),
+              (250, 250, 250), (251, 251, 251), (80, 104, 90), (80, 105, 90)]
+    image = Image.new("RGB", (len(colors), 1512), (255, 255, 255))
+    for y in (159, 160, 1510, 1511):
+        for x, color in enumerate(colors):
+            image.putpixel((x, y), color)
+    dark, light = _neutral_masks(image)
+    for y in (160, 1510):
+        assert [dark.getpixel((x, y)) for x in range(len(colors))] == [0, 1, 1, 0, 0, 0, 1, 0]
+        assert [light.getpixel((x, y)) for x in range(len(colors))] == [0, 0, 0, 1, 1, 0, 0, 0]
+    for y in (159, 1511):
+        assert not any(dark.getpixel((x, y)) or light.getpixel((x, y)) for x in range(len(colors)))

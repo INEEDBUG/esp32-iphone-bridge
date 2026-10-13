@@ -17,6 +17,7 @@ from .visual_marker import decode_visual_marker
 _SCREEN = (828, 1792)
 _PROBE_ID = re.compile(r"^(0[1-9]|1[0-9]|2[0-5])$")
 _LABEL = re.compile(r"^Probe (0[1-9]|1[0-9]|2[0-5]) \(([0-9]{1,6})\)$")
+_BUTTON_FILL = (237, 244, 255)  # Synthetic page CSS #edf4ff after sRGB conversion.
 
 
 def _ocr_target(probe_id, fields):
@@ -229,14 +230,99 @@ def _blue_button_components(image):
     return components
 
 
+def _target_fill_box(image, text_bounds):
+    """Find one bounded button-fill component seeded inside the OCR label box."""
+    x, y, text_width, text_height = text_bounds
+    if text_width > 320 or text_height > 50:
+        return None
+    width, height = image.size
+    pixels = image.load()
+
+    def is_fill(px, py):
+        color = pixels[px, py]
+        return all(abs(int(color[channel]) - _BUTTON_FILL[channel]) <= 3
+                   for channel in range(3))
+
+    left = max(0, int(math.floor(x)))
+    top = max(0, int(math.floor(y)))
+    right = min(width, int(math.ceil(x + text_width)))
+    bottom = min(height, int(math.ceil(y + text_height)))
+    seeds = [(sx, sy) for sy in range(top, bottom) for sx in range(left, right)
+             if is_fill(sx, sy)]
+    if not seeds:
+        return None
+
+    visited = bytearray(width * height)
+    components = []
+    max_component_pixels = 760 * 180
+    for sx, sy in seeds:
+        start = sy * width + sx
+        if visited[start]:
+            continue
+        queue = deque([start])
+        visited[start] = 1
+        min_x = max_x = sx
+        min_y = max_y = sy
+        points = 0
+        too_large = False
+        while queue:
+            index = queue.popleft()
+            px, py = index % width, index // width
+            points += 1
+            min_x, max_x = min(min_x, px), max(max_x, px)
+            min_y, max_y = min(min_y, py), max(max_y, py)
+            if (max_x - min_x + 1 > 760 or max_y - min_y + 1 > 180
+                    or points > max_component_pixels):
+                too_large = True
+                break
+            for dy in (-1, 0, 1):
+                ny = py + dy
+                if not 0 <= ny < height:
+                    continue
+                row = ny * width
+                for dx in (-1, 0, 1):
+                    nx = px + dx
+                    if not 0 <= nx < width:
+                        continue
+                    neighbor = row + nx
+                    if not visited[neighbor] and is_fill(nx, ny):
+                        visited[neighbor] = 1
+                        queue.append(neighbor)
+        if too_large:
+            return None
+        box_width, box_height = max_x - min_x + 1, max_y - min_y + 1
+        area = box_width * box_height
+        if (box_width < 70 or box_height < 50 or points < 2500
+                or points / area < 0.65):
+            continue
+        # The image-text ROI must be fully inside this fill region's bounds;
+        # letter strokes themselves may of course be dark holes in the region.
+        if (x < min_x or y < min_y or x + text_width > max_x + 1
+                or y + text_height > max_y + 1):
+            continue
+        components.append((min_x, min_y, max_x + 1, max_y + 1))
+        if len(components) > 1:
+            return None
+    return components[0] if len(components) == 1 else None
+
+
+def _outline_matches_fill(outline, fill_box):
+    """Require every inferred outline edge to closely surround the fill ROI."""
+    left, top, right, bottom = outline
+    fill_left, fill_top, fill_right, fill_bottom = fill_box
+    margins = (fill_left - left, fill_top - top, right - fill_right, bottom - fill_bottom)
+    return all(1 <= margin <= 8 for margin in margins)
+
+
 def _find_button(image, text_bounds, pointer):
     x, y, width, height = text_bounds
-    candidates = []
+    component_candidates = []
     for left, top, right, bottom in _blue_button_components(image):
         if (left + 5 <= x and top + 5 <= y and right - 5 >= x + width
                 and bottom - 5 >= y + height):
-            candidates.append((left, top, right, bottom))
-    if len(candidates) != 1:
+            component_candidates.append((left, top, right, bottom))
+    candidates = component_candidates
+    if len(component_candidates) != 1:
         # Border components can merge where adjacent buttons nearly touch.
         # Re-detect closed outlines from independent row/column runs.
         candidates = [box for box in _blue_button_rectangles(image, text_bounds, pointer)
@@ -247,6 +333,13 @@ def _find_button(image, text_bounds, pointer):
     text_center = x + width / 2.0
     candidates = [box for box in candidates
                   if abs((box[0] + box[2]) / 2.0 - text_center) <= 6.0]
+    if len(candidates) != 1:
+        # Only the merged-component case has evidence suitable for this second,
+        # independent geometry channel. Multiple complete border components
+        # stay ambiguous (including genuinely nested candidate buttons).
+        fill_box = _target_fill_box(image, text_bounds) if not component_candidates else None
+        if fill_box is not None:
+            candidates = [box for box in candidates if _outline_matches_fill(box, fill_box)]
     if len(candidates) != 1:
         raise ValueError("button border missing or ambiguous")
     left, top, right, bottom = candidates[0]

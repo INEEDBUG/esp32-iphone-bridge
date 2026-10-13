@@ -49,6 +49,25 @@ def page(*, label="Probe 07 (0)", button=(300, 400, 520, 500), marker=True):
     return stream.getvalue()
 
 
+def shared_edge_page(*, fill=(237, 244, 255)):
+    """The top and target button share a blue edge; adjacent sides form a false box."""
+    image = Image.new("RGB", (828, 1792), (239, 242, 247))
+    draw = ImageDraw.Draw(image)
+    blue = (40, 94, 200)
+    draw.rounded_rectangle((54, 404, 527, 500), radius=18, fill=fill, outline=blue, width=2)
+    draw.rounded_rectangle((54, 500, 281, 596), radius=18, fill=fill, outline=blue, width=2)
+    draw.rounded_rectangle((300, 500, 527, 596), radius=18, fill=fill, outline=blue, width=2)
+    draw.rounded_rectangle((546, 500, 774, 596), radius=18, fill=fill, outline=blue, width=2)
+    draw.text((347, 536), "Probe 12 (0)", fill=(18, 59, 132))
+    for row, line in enumerate(marker_rgb(NONCE)):
+        for col, color in enumerate(line):
+            draw.rectangle((728 + col * 8, 1600 + row * 8,
+                            735 + col * 8, 1607 + row * 8), fill=color)
+    stream = io.BytesIO()
+    image.save(stream, format="PNG")
+    return stream.getvalue()
+
+
 def ocr(label="Probe 07 (0)", bounds=None):
     if bounds is None:
         bounds = {"x": 360, "y": 436, "width": 100, "height": 20}
@@ -176,3 +195,25 @@ def test_row_column_outline_fallback_separates_adjacent_merged_buttons(monkeypat
          "image_text_bounds": {"x": 360, "y": 436, "width": 100, "height": 20}}]}
     guard = ImageProbeGuard("07", stream.getvalue(), NONCE, fields)
     assert guard._button[1] < 501
+
+
+def test_shared_edge_false_symmetric_box_is_resolved_by_unique_fill_anchor(monkeypatch):
+    import phonelab.image_probe_guard as module
+    monkeypatch.setattr(module, "detect_pointer", lambda *_args, **_kwargs:
+                        type("P", (), {"center_x": 413.5, "center_y": 574., "diameter": 30.})())
+    fields = {"status": "OK", "visible_probes": [
+        {"id": "12", "count": 0,
+         "image_text_bounds": {"x": 347, "y": 536, "width": 133, "height": 20}}]}
+    guard = ImageProbeGuard("12", shared_edge_page(), NONCE, fields)
+    assert guard._button == (300, 500, 527, 596)
+
+
+def test_shared_edge_without_recognized_fill_stays_ambiguous(monkeypatch):
+    import phonelab.image_probe_guard as module
+    monkeypatch.setattr(module, "detect_pointer", lambda *_args, **_kwargs:
+                        type("P", (), {"center_x": 413.5, "center_y": 574., "diameter": 30.})())
+    fields = {"status": "OK", "visible_probes": [
+        {"id": "12", "count": 0,
+         "image_text_bounds": {"x": 347, "y": 536, "width": 133, "height": 20}}]}
+    with pytest.raises(ValueError, match="button border missing or ambiguous"):
+        ImageProbeGuard("12", shared_edge_page(fill=(225, 234, 248)), NONCE, fields)

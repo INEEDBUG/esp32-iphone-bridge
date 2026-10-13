@@ -2,8 +2,9 @@
 
 This intentionally does not use or weaken the generic Controller's lock gate.
 It establishes page visibility/progression, never an OS UNLOCKED state. Separate
-one-click experiments require an onsite report or a recent unchanged page event. Keys, text,
-home, presses, queued actions, and automatic retries are not exposed.
+one-action experiments require a current page image or browser observation.
+Only fixed synthetic text and backspace are exposed; home, holds, queued actions,
+and automatic retries are not exposed.
 """
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -17,6 +18,17 @@ from .visual_marker import VisualMarkerTracker
 
 class PageScopeError(RuntimeError):
     pass
+
+
+_SYNTHETIC_TEXT_PHRASES = (
+    'test123', 'TEST123', 'Test 123', 'test123!@#',
+    'ASCII symbols: !"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~',
+)
+
+
+def _synthetic_text_prefix(value):
+    return (isinstance(value, str) and value.isascii()
+            and any(phrase.startswith(value) for phrase in _SYNTHETIC_TEXT_PHRASES))
 
 
 @contextmanager
@@ -40,6 +52,7 @@ def windows_input_lease(path):
 
 
 class _OnePageAction:
+    allowed_operations = frozenset(('move', 'click', 'scroll'))
     preparation_seconds = 1.0
     dispatch_seconds = None
     observation_max_age = 2.0
@@ -87,7 +100,7 @@ class _OnePageAction:
         return snapshot, state
 
     def _execute_one(self, operation, arguments):
-        if operation not in ('move', 'click', 'scroll'):
+        if operation not in self.allowed_operations:
             raise PageScopeError('unsupported page experiment')
         if not self._action.acquire(blocking=False):
             raise PageScopeError('an action is already running')
@@ -284,6 +297,7 @@ class _PageImageLocatedActionExperiment(_OnePageAction):
         if not 0 <= self.clock() - snapshot.metadata['received_monotonic'] <= 2:
             raise PageScopeError('image location expired during validation')
         self._check_cancelled()
+        return observed
 
 
 class PageImageLocatedClickExperiment(_PageImageLocatedActionExperiment):
@@ -304,3 +318,37 @@ class PageImageLocatedScrollExperiment(_PageImageLocatedActionExperiment):
         if type(vertical) is not int or vertical == 0 or not -3 <= vertical <= 3:
             raise PageScopeError('one nonzero vertical wheel action of at most 3 is required')
         return self._execute_one('scroll', {'v': vertical, 'h': 0})
+
+
+class PageImageLocatedTextExperiment(_PageImageLocatedActionExperiment):
+    """One allowlisted text/key action on the focused synthetic input only."""
+    allowed_operations = frozenset(('type', 'key'))
+    preparation_seconds = 5.0
+    dispatch_seconds = 1.0
+    observation_max_age = .25
+
+    def __init__(self, *args, image_guard, expected_text, **kwargs):
+        if not _synthetic_text_prefix(expected_text):
+            raise PageScopeError('expected field text is not an approved synthetic phrase prefix')
+        super().__init__(*args, image_guard=image_guard, **kwargs)
+        self.expected_text = expected_text
+
+    def _before_dispatch(self, snapshot=None):
+        observed = super()._before_dispatch(snapshot)
+        if (not isinstance(observed, dict)
+                or observed.get('role') != 'synthetic-text'
+                or observed.get('focused') is not True
+                or observed.get('caret_at_end') is not True
+                or not isinstance(observed.get('text'), str)
+                or observed.get('text') != self.expected_text):
+            raise PageScopeError('focused synthetic text field changed or is ambiguous')
+
+    def type_phrase(self, phrase):
+        if self.expected_text != '' or not isinstance(phrase, str) or phrase not in _SYNTHETIC_TEXT_PHRASES:
+            raise PageScopeError('typing requires an empty field and one approved synthetic phrase')
+        return self._execute_one('type', {'text': phrase})
+
+    def backspace(self):
+        if not self.expected_text or not _synthetic_text_prefix(self.expected_text):
+            raise PageScopeError('backspace requires a nonempty approved synthetic phrase prefix')
+        return self._execute_one('key', {'key': 'backspace'})

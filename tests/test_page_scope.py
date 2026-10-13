@@ -7,6 +7,7 @@ import pytest
 
 from phonelab.page_scope import (PageScopeError, PageMovementExperiment,
                                 PageConfirmedClickExperiment, OnsitePointerConfirmation)
+import phonelab.page_scope as page_scope
 from test_visual_marker import fixture
 
 
@@ -181,6 +182,201 @@ def observed_click_setup():
         lease_factory=movement.lease_factory, clock=movement.clock, sleep=movement.sleep,
         cancel_token=movement.cancel_token)
     return click, observer, backend, opened
+
+
+class TextGuard:
+    def __init__(self, result=None):
+        self.result = result
+        self.images = []
+    def verify(self, png):
+        self.images.append(png)
+        if callable(self.result):
+            return self.result(len(self.images))
+        return self.result
+
+
+def text_setup(*, expected_text="", guard=None, backend=None, cancel_token=None):
+    movement, observer, backend, opened = setup()
+    backend = backend or Backend()
+    def execute(request):
+        request["_pre_input_guard"]()
+        backend.calls.append(request)
+        return backend.result
+    backend.execute = execute
+    experiment = page_scope.PageImageLocatedTextExperiment(observer, target=movement.target,
+        run_id=movement.run_id, nonce=movement.nonce, test_id=movement.test_id,
+        backend_opener=lambda: opened.append(True) or backend,
+        lease_factory=movement.lease_factory, cancel_token=cancel_token or movement.cancel_token,
+        clock=movement.clock, sleep=movement.sleep, image_guard=guard or TextGuard({
+            "role": "synthetic-text", "focused": True, "caret_at_end": True,
+            "text": expected_text}), expected_text=expected_text)
+    return experiment, observer, backend, opened
+
+
+def test_image_text_type_accepts_only_fixed_phrase_from_empty_field_and_stays_unverified():
+    guard = TextGuard({"role": "synthetic-text", "focused": True,
+        "caret_at_end": True, "text": ""})
+    experiment, observer, backend, opened = text_setup(guard=guard)
+    result = experiment.type_phrase("test123!@#")
+    assert opened == [True] and len(backend.calls) == 1 and backend.closed == 1
+    request = backend.calls[0]
+    assert request["op"] == "type" and request["args"] == {"text": "test123!@#"}
+    assert request["_dispatch_ttl_seconds"] == 1.0
+    assert len(guard.images) == 2
+    assert result["verified"] is False and result["lock_state"] == "UNKNOWN"
+
+
+def test_image_text_type_requires_empty_expected_field_and_exact_allowlisted_phrase():
+    experiment, observer, backend, opened = text_setup(expected_text="T")
+    with pytest.raises(PageScopeError):
+        experiment.type_phrase("test123")
+    experiment, observer, backend, opened = text_setup()
+    with pytest.raises(PageScopeError):
+        experiment.type_phrase("unapproved")
+    assert not opened and not backend.calls
+
+
+def test_image_text_scope_has_no_default_allowing_location_guard_bypass():
+    movement, observer, backend, opened = setup()
+    with pytest.raises(TypeError):
+        page_scope.PageImageLocatedTextExperiment(observer, target=movement.target,
+            run_id=movement.run_id, nonce=movement.nonce, test_id=movement.test_id,
+            backend_opener=movement.backend_opener, lease_factory=movement.lease_factory,
+            cancel_token=movement.cancel_token, clock=movement.clock, sleep=movement.sleep,
+            expected_text="")
+    assert not opened and not backend.calls
+
+
+@pytest.mark.parametrize("operation,arguments", [
+    ("type", {"text": "test123"}),
+    ("key", {"key": "backspace"}),
+])
+@pytest.mark.parametrize("experiment_kind", ["movement", "image_click"])
+def test_non_text_experiments_cannot_dispatch_text_or_key_operations(
+        operation, arguments, experiment_kind):
+    movement, observer, backend, opened = setup()
+    if experiment_kind == "movement":
+        experiment = movement
+    else:
+        experiment = page_scope.PageImageLocatedClickExperiment(
+            observer, target=movement.target, run_id=movement.run_id,
+            nonce=movement.nonce, test_id=movement.test_id,
+            backend_opener=movement.backend_opener, lease_factory=movement.lease_factory,
+            cancel_token=movement.cancel_token, clock=movement.clock, sleep=movement.sleep,
+            image_guard=TextGuard({"probe_id": "01", "count": 0}))
+    with pytest.raises(PageScopeError, match="unsupported page experiment"):
+        experiment._execute_one(operation, arguments)
+    assert not opened and not backend.calls
+
+
+@pytest.mark.parametrize("operation,arguments", [
+    ("move", {"dx": 1, "dy": 0}),
+    ("click", {}),
+    ("scroll", {"v": 1, "h": 0}),
+])
+def test_image_text_experiment_cannot_dispatch_other_action_kinds(operation, arguments):
+    experiment, observer, backend, opened = text_setup(expected_text="")
+    with pytest.raises(PageScopeError, match="unsupported page experiment"):
+        experiment._execute_one(operation, arguments)
+    assert not opened and not backend.calls
+
+
+@pytest.mark.parametrize("prefix", ["test", "test123", "TEST123", "Test 123", "test123!@#",
+    "ASCII symbols: !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"])
+def test_image_text_backspace_accepts_nonempty_prefix_and_sends_one_key(prefix):
+    guard = TextGuard({"role": "synthetic-text", "focused": True,
+        "caret_at_end": True, "text": prefix})
+    experiment, observer, backend, opened = text_setup(expected_text=prefix, guard=guard)
+    result = experiment.backspace()
+    assert result["verified"] is False and len(backend.calls) == 1
+    assert backend.calls[0]["op"] == "key" and backend.calls[0]["args"] == {"key": "backspace"}
+    assert backend.closed == 1 and len(guard.images) == 2
+
+
+@pytest.mark.parametrize("text", ["not approved", "test123\n"])
+def test_image_text_backspace_rejects_non_allowlisted_field_before_open(text):
+    with pytest.raises(PageScopeError):
+        text_setup(expected_text=text)
+
+
+def test_image_text_backspace_rejects_empty_prefix_before_dispatch():
+    experiment, observer, backend, opened = text_setup(expected_text="")
+    with pytest.raises(PageScopeError): experiment.backspace()
+    assert not opened and not backend.calls
+
+
+@pytest.mark.parametrize("guard_result", [
+    {"role": "other", "focused": True, "caret_at_end": True, "text": ""},
+    {"role": "synthetic-text", "focused": False, "caret_at_end": True, "text": ""},
+    {"role": "synthetic-text", "focused": True, "caret_at_end": False, "text": ""},
+    {"role": "synthetic-text", "focused": True, "caret_at_end": True, "text": "wrong"},
+    None,
+])
+def test_image_text_guard_mismatch_closes_without_dispatch(guard_result):
+    guard = TextGuard(guard_result)
+    experiment, observer, backend, opened = text_setup(guard=guard)
+    with pytest.raises(PageScopeError):
+        experiment.type_phrase("test123")
+    assert opened == [True] and backend.calls == [] and backend.closed == 1
+    assert len(guard.images) == 1
+
+
+def test_image_text_final_guard_catches_focus_change_after_serial_hello():
+    guard = TextGuard(lambda attempt: {"role": "synthetic-text", "focused": attempt == 1,
+        "caret_at_end": True, "text": ""})
+    experiment, observer, backend, opened = text_setup(guard=guard)
+    transport_steps = []
+    def hello_then_guard(request):
+        transport_steps.append("hello")
+        request["_pre_input_guard"]()
+        transport_steps.append("dispatch")
+        backend.calls.append(request)
+        return backend.result
+    backend.execute = hello_then_guard
+    with pytest.raises(PageScopeError):
+        experiment.type_phrase("test123")
+    assert transport_steps == ["hello"]
+    assert len(guard.images) == 2 and backend.calls == [] and backend.closed == 1
+
+
+def test_image_text_cancel_after_open_closes_without_action_or_retry():
+    cancel = threading.Event()
+    experiment, observer, backend, opened = text_setup(cancel_token=cancel)
+    def stop_before_guard(request):
+        cancel.set()
+        request["_pre_input_guard"]()
+    backend.execute = stop_before_guard
+    with pytest.raises(PageScopeError):
+        experiment.type_phrase("test123")
+    assert backend.calls == [] and backend.closed == 1
+    with pytest.raises(PageScopeError):
+        experiment.type_phrase("test123")
+    assert len(opened) == 1
+
+
+def test_image_text_unknown_dispatch_is_closed_and_never_replayed():
+    experiment, observer, backend, opened = text_setup()
+    backend.result = {"state": "unknown"}
+    with pytest.raises(PageScopeError):
+        experiment.type_phrase("test123")
+    assert len(backend.calls) == 1 and backend.closed == 1
+    with pytest.raises(PageScopeError):
+        experiment.type_phrase("test123")
+    assert len(backend.calls) == 1 and len(opened) == 1
+
+
+def test_image_text_dispatch_timeout_closes_and_never_replays():
+    experiment, observer, backend, opened = text_setup()
+    def timeout(request):
+        request["_pre_input_guard"]()
+        backend.calls.append(request)
+        observer.clock.sleep(1.1)
+        raise TimeoutError("dispatch deadline elapsed")
+    backend.execute = timeout
+    with pytest.raises(PageScopeError): experiment.type_phrase("test123")
+    assert len(backend.calls) == 1 and backend.closed == 1
+    with pytest.raises(PageScopeError): experiment.type_phrase("test123")
+    assert len(backend.calls) == 1 and len(opened) == 1
 
 
 def test_observed_click_fetches_current_pointer_event_and_is_one_shot():
