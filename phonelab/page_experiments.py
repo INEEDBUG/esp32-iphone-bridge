@@ -18,7 +18,7 @@ from phonelab.iphone import read_target_binding
 from phonelab.live_observation import BASE_URL, LiveObservationClient
 from phonelab.page_scope import (PageMovementExperiment, PageObservedClickExperiment,
                                  PageObservedScrollExperiment, PageImageLocatedClickExperiment,
-                                 windows_input_lease)
+                                 PageImageLocatedScrollExperiment, windows_input_lease)
 from phonelab.visual_marker import decode_visual_marker
 from phonelab.stop_signal import StopStore
 
@@ -68,12 +68,18 @@ def _validate_request(operation, *, dx=None, dy=None, pointer_seq=None, vertical
         if type(pointer_seq) is not int or pointer_seq < 1:
             raise ValueError("click requires the current positive pointer event sequence")
         return {"pointer_seq": pointer_seq}
-    if operation == 'image-click':
-        if (probe_id not in {f'{n:02d}' for n in range(1, 26)}
+    if operation in {'image-click', 'image-scroll'}:
+        if (not isinstance(probe_id, str) or probe_id not in {f'{n:02d}' for n in range(1, 26)}
                 or type(expected_count) is not int or not 0 <= expected_count <= 999999
-                or any(value is not None for value in (dx, dy, pointer_seq, vertical))):
-            raise ValueError('one synthetic image probe id required')
-        return {'probe_id': probe_id, 'expected_count': expected_count}
+                or any(value is not None for value in (dx, dy, pointer_seq))):
+            raise ValueError('one synthetic image probe id and expected count are required')
+        if operation == 'image-click':
+            if vertical is not None:
+                raise ValueError('image-click accepts no wheel delta')
+            return {'probe_id': probe_id, 'expected_count': expected_count}
+        if type(vertical) is not int or vertical == 0 or not -3 <= vertical <= 3:
+            raise ValueError('image-scroll requires a vertical delta within 1..3')
+        return {'probe_id': probe_id, 'expected_count': expected_count, 'vertical': vertical}
     if operation == "scroll":
         if (type(pointer_seq) is not int or pointer_seq < 1 or type(vertical) is not int
                 or vertical == 0 or not -3 <= vertical <= 3):
@@ -266,18 +272,25 @@ def run_experiment(operation, *, dx=None, dy=None, pointer_seq=None, vertical=No
         elif operation == "click":
             experiment = PageObservedClickExperiment(recording, **common)
             result = experiment.click(arguments["pointer_seq"])
-        elif operation == 'image-click':
+        elif operation in {'image-click', 'image-scroll'}:
             from phonelab.image_probe_guard import ImageProbeGuard
             from phonelab.local_ocr import read_probe_ocr
             image = evidence / 'page-association.png'
             ocr = read_probe_ocr(image, nonce)
-            selected = [v for v in ocr['visible_probes'] if v.get('id') == arguments['probe_id']]
+            selected = [v for v in ocr['visible_probes'] if isinstance(v, dict)
+                        and v.get('id') == arguments['probe_id']]
             if len(selected) != 1 or selected[0].get('count') != arguments['expected_count']:
                 raise ValueError('planned probe count does not match current image; do not replay')
             guard = ImageProbeGuard(arguments['probe_id'], first_snapshot.image_bytes, nonce, ocr)
-            experiment = PageImageLocatedClickExperiment(recording, image_guard=guard, **common)
-            result = experiment.click()
-        else:
+            if operation == 'image-click':
+                experiment = PageImageLocatedClickExperiment(recording, image_guard=guard,
+                    expected_count=arguments['expected_count'], probe_id=arguments['probe_id'], **common)
+                result = experiment.click()
+            else:
+                experiment = PageImageLocatedScrollExperiment(recording, image_guard=guard,
+                    expected_count=arguments['expected_count'], probe_id=arguments['probe_id'], **common)
+                result = experiment.scroll(arguments['vertical'])
+        elif operation == "scroll":
             experiment = PageObservedScrollExperiment(recording, **common)
             result = experiment.scroll(arguments["pointer_seq"], arguments["vertical"])
 
@@ -344,7 +357,7 @@ def run_experiment(operation, *, dx=None, dy=None, pointer_seq=None, vertical=No
 def _parser():
     parser = argparse.ArgumentParser(description="One-shot synthetic-page BLE experiment; no general input")
     sub = parser.add_subparsers(dest="operation", required=True)
-    for name in ("observe", "move", "click", "image-click", "scroll"):
+    for name in ("observe", "move", "click", "image-click", "scroll", "image-scroll"):
         command = sub.add_parser(name)
         command.add_argument("--test-id", choices=(TEST_ID,), default=TEST_ID)
         command.add_argument("--seed", choices=(SEED,), default=SEED)
@@ -353,9 +366,11 @@ def _parser():
             command.add_argument("--dy", type=int, required=True)
         elif name == "click":
             command.add_argument("--pointer-seq", type=int, required=True)
-        elif name == 'image-click':
+        elif name in {'image-click', 'image-scroll'}:
             command.add_argument('--probe-id', choices=tuple(f'{n:02d}' for n in range(1, 26)), required=True)
             command.add_argument('--expected-count', type=int, required=True)
+            if name == 'image-scroll':
+                command.add_argument('--vertical', type=int, required=True)
         elif name == "scroll":
             command.add_argument("--pointer-seq", type=int, required=True)
             command.add_argument("--vertical", type=int, required=True)

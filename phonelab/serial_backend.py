@@ -8,6 +8,7 @@ import uuid
 
 class SerialBackend:
     name = 'esp32-ble-serial-unverified'
+    _GUARD_HEARTBEAT_SECONDS = .4
 
     def __init__(self, wire, *, stop_token=None):
         self.wire = wire
@@ -82,7 +83,68 @@ class SerialBackend:
             return response
         raise TimeoutError('ACK missing; action may have occurred; do not replay')
 
+    def _guard_with_heartbeat(self, request, guard):
+        dispatch_ttl = request.get('_dispatch_ttl_seconds')
+        if dispatch_ttl is None:
+            return guard()
+
+        stopped = threading.Event()
+        failed = threading.Event()
+        event = request.get('_cancel_event')
+        deadline = request['deadline']
+
+        def stop_for_deadline():
+            failed.set()
+            self.cancel.set()
+            self.stop()
+
+        def heartbeat():
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    stop_for_deadline()
+                    return
+                if stopped.wait(min(self._GUARD_HEARTBEAT_SECONDS, remaining)):
+                    return
+                if self.cancel.is_set() or self._shared_stopped() or (event is not None and event.is_set()):
+                    return
+                if time.monotonic() >= deadline:
+                    stop_for_deadline()
+                    return
+                try:
+                    self._send({'id': 'beat-' + uuid.uuid4().hex,
+                                'session': request['session'], 'op': 'ping', 'args': {},
+                                'deadline': deadline, '_cancel_event': event})
+                except Exception:
+                    failed.set()
+                    self.cancel.set()
+                    return
+
+        worker = threading.Thread(target=heartbeat, name='phonelab-guard-heartbeat', daemon=True)
+        worker.start()
+        try:
+            validity = guard()
+        finally:
+            stopped.set()
+            worker.join(.5)
+            if worker.is_alive():
+                self.cancel.set()
+                raise TimeoutError('guard heartbeat did not stop; action blocked')
+        if failed.is_set() or self.cancel.is_set():
+            raise TimeoutError('guard heartbeat or generation stopped; action blocked')
+        if self._shared_stopped() or (event is not None and event.is_set()):
+            self.cancel.set()
+            raise TimeoutError('guard heartbeat or generation stopped; action blocked')
+        if time.monotonic() >= deadline:
+            stop_for_deadline()
+            raise TimeoutError('guard preparation deadline expired; action blocked')
+        return validity
+
     def execute(self, request):
+        dispatch_ttl = request.get('_dispatch_ttl_seconds')
+        if dispatch_ttl is not None and (type(dispatch_ttl) not in (int, float)
+                                         or not 0 < dispatch_ttl <= 1):
+            raise ValueError('invalid local action time bound')
         event = request.get('_cancel_event')
         with self._write:
             if self._shared_stopped() or (event is not None and event.is_set()):
@@ -98,16 +160,13 @@ class SerialBackend:
         guard = request.get('_pre_input_guard')
         if guard is not None:
             if not callable(guard): raise ValueError('invalid local input guard')
-            validity = guard()  # recheck page scope after hello, before the actual action write
+            validity = self._guard_with_heartbeat(request, guard)  # no input while page scope is rechecked
             if validity is not None:
                 expiry = validity.get('valid_before_monotonic') if isinstance(validity, dict) else None
                 if type(expiry) not in (int, float) or not math.isfinite(expiry):
                     raise ValueError('invalid local frame validity bound')
                 request = {**request, 'deadline': min(request['deadline'], expiry)}
-        dispatch_ttl = request.get('_dispatch_ttl_seconds')
         if dispatch_ttl is not None:
-            if type(dispatch_ttl) not in (int, float) or not 0 < dispatch_ttl <= 1:
-                raise ValueError('invalid local action time bound')
             request = {**request, 'deadline': min(request['deadline'], time.monotonic() + dispatch_ttl)}
         return self._exchange(request)
 

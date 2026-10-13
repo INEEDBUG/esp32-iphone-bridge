@@ -174,3 +174,121 @@ def test_expired_guard_frame_prevents_action_write():
             "_pre_input_guard":lambda: {"valid_before_monotonic":time.monotonic()-1},
             "_dispatch_ttl_seconds":1})
     assert [json.loads(raw)["op"] for raw in wire.writes] == ["hello"]
+
+
+def test_long_image_guard_keeps_firmware_session_alive_with_ping_only():
+    class WatchdogWire(Wire):
+        def __init__(self):
+            super().__init__()
+            self.last_session_activity = None
+            self.watchdog_expired = False
+        def write(self, raw):
+            request = json.loads(raw)
+            if request['op'] == 'hello':
+                self.last_session_activity = time.monotonic()
+                super().write(raw)
+            elif request['op'] == 'ping':
+                if self.last_session_activity is None or time.monotonic() - self.last_session_activity > 1.5:
+                    self.watchdog_expired = True
+                self.last_session_activity = time.monotonic()
+                super().write(raw)
+            elif request['op'] == 'click':
+                if self.last_session_activity is None or time.monotonic() - self.last_session_activity > 1.5:
+                    self.watchdog_expired = True
+                    self.lines.append(json.dumps({'id': request['id'], 'session': request['session'],
+                        'state': 'rejected', 'error': 'session_timeout', 'ble_connected': True,
+                        'mouse_ready': True}).encode() + b'\n')
+                else:
+                    self.last_session_activity = time.monotonic()
+                    super().write(raw)
+            else:
+                super().write(raw)
+
+    wire = WatchdogWire()
+    backend = SerialBackend(wire)
+    def slow_guard():
+        deadline = time.monotonic() + 1.6
+        while time.monotonic() < deadline:
+            time.sleep(.01)
+        return {'valid_before_monotonic': time.monotonic() + .5}
+    result = backend.execute({'id': 'image', 'session': 'one', 'op': 'click', 'args': {},
+        'deadline': time.monotonic() + 5, '_pre_input_guard': slow_guard,
+        '_dispatch_ttl_seconds': 1})
+    assert result['state'] == 'executed'
+    assert wire.watchdog_expired is False
+    ops = [json.loads(raw)['op'] for raw in wire.writes]
+    assert ops[0] == 'hello' and ops[-1] == 'click'
+    assert ops.count('click') == 1 and 'ping' in ops
+
+
+def test_guard_failure_during_image_preparation_never_sends_action():
+    wire = Wire()
+    backend = SerialBackend(wire)
+    def broken_guard():
+        time.sleep(.45)
+        raise ValueError('image changed')
+    with pytest.raises(ValueError):
+        backend.execute({'id': 'image', 'session': 'one', 'op': 'click', 'args': {},
+            'deadline': time.monotonic() + 5, '_pre_input_guard': broken_guard,
+            '_dispatch_ttl_seconds': 1})
+    backend.close()
+    ops = [json.loads(raw)['op'] for raw in wire.writes]
+    assert 'click' not in ops and ops[-1] == 'stop'
+
+
+def test_shared_stop_during_image_guard_blocks_action_and_suppresses_ping(tmp_path):
+    from phonelab.stop_signal import StopStore
+    store = StopStore(tmp_path)
+    wire = Wire()
+    backend = SerialBackend(wire, stop_token=store.capture())
+    def stopped_guard():
+        store.publish_stop()
+        time.sleep(.45)
+        return {'valid_before_monotonic': time.monotonic() + 1}
+    with pytest.raises(TimeoutError):
+        backend.execute({'id': 'image', 'session': 'one', 'op': 'click', 'args': {},
+            'deadline': time.monotonic() + 5, '_pre_input_guard': stopped_guard,
+            '_dispatch_ttl_seconds': 1})
+    assert backend.cancel.is_set()
+    backend.close()
+    ops = [json.loads(raw)['op'] for raw in wire.writes]
+    assert ops == ['hello', 'stop']
+
+
+def test_image_guard_hard_deadline_stops_owned_session_and_blocks_action():
+    wire = Wire()
+    backend = SerialBackend(wire)
+    with pytest.raises(TimeoutError):
+        backend.execute({'id': 'image', 'session': 'one', 'op': 'click', 'args': {},
+            'deadline': time.monotonic() + .12,
+            '_pre_input_guard': lambda: time.sleep(.18), '_dispatch_ttl_seconds': 1})
+    ops = [json.loads(raw)['op'] for raw in wire.writes]
+    assert ops == ['hello', 'stop']
+    assert backend.session is None
+
+
+def test_dispatch_ttl_is_validated_even_without_guard():
+    wire = Wire()
+    backend = SerialBackend(wire)
+    with pytest.raises(ValueError):
+        backend.execute({'id': 'image', 'session': 'one', 'op': 'click', 'args': {},
+            'deadline': time.monotonic() + 5, '_dispatch_ttl_seconds': 2})
+    assert wire.writes == []
+
+def test_heartbeat_write_failure_cancels_action_and_is_not_retried():
+    class FailingHeartbeatWire(Wire):
+        def write(self, raw):
+            if json.loads(raw)['op'] == 'ping':
+                self.writes.append(raw)
+                raise OSError('transport failed')
+            super().write(raw)
+    wire = FailingHeartbeatWire()
+    backend = SerialBackend(wire)
+    with pytest.raises(TimeoutError):
+        backend.execute({'id': 'image', 'session': 'one', 'op': 'click', 'args': {},
+            'deadline': time.monotonic() + 5,
+            '_pre_input_guard': lambda: time.sleep(.45), '_dispatch_ttl_seconds': 1})
+    assert backend.cancel.is_set()
+    backend.close()
+    ops = [json.loads(raw)['op'] for raw in wire.writes]
+    assert ops.count('ping') == 1 and 'click' not in ops and ops[-1] == 'stop'

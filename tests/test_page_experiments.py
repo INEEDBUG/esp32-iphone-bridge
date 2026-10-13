@@ -244,7 +244,9 @@ def test_image_click_uses_local_pixels_and_no_browser_hover_coordinates(tmp_path
         def __init__(self, probe, png, nonce, fields):
             assert probe == "10" and nonce == NONCE
             assert fields['synthetic'] is True
-        def verify(self, png): checked.append(png)
+        def verify(self, png):
+            checked.append(png)
+            return {"probe_id": "10", "count": 0}
     monkeypatch.setattr(guard_module, "ImageProbeGuard", Guard)
     monkeypatch.setattr(ocr_module, "read_probe_ocr", lambda *_: {"synthetic":True,
         "visible_probes":[{"id":"10", "count":0}]})
@@ -266,3 +268,62 @@ def test_image_click_refuses_old_expected_count_before_open(tmp_path, monkeypatc
     monkeypatch.setattr(ocr_module, "read_probe_ocr", lambda *_: {"visible_probes":[{"id":"10", "count":1}]})
     result = run_experiment("image-click", probe_id="10", expected_count=0, **kwargs)
     assert result["state"] == "NOT_SENT" and not opens and not backend.calls
+
+
+def test_image_scroll_requires_expected_count_and_small_nonzero_vertical_delta():
+    valid = page_experiments._validate_request("image-scroll", probe_id="10",
+                                               expected_count=4, vertical=-3)
+    assert valid == {"probe_id": "10", "expected_count": 4, "vertical": -3}
+    for kwargs in [
+        {"probe_id": "10", "vertical": 1},
+        {"probe_id": "10", "expected_count": 0, "vertical": 0},
+        {"probe_id": "10", "expected_count": 0, "vertical": 4},
+        {"probe_id": "00", "expected_count": 0, "vertical": 1},
+        {"probe_id": "10", "expected_count": -1, "vertical": 1},
+        {"probe_id": "10", "expected_count": 0, "vertical": 1, "pointer_seq": 1},
+    ]:
+        with pytest.raises(ValueError):
+            page_experiments._validate_request("image-scroll", **kwargs)
+
+
+def test_image_scroll_rechecks_image_and_sends_only_scroll_wire(tmp_path, monkeypatch):
+    import phonelab.image_probe_guard as guard_module
+    import phonelab.local_ocr as ocr_module
+    kwargs, observer, backend, opens, private = setup(tmp_path)
+    checked = []
+    class Guard:
+        def __init__(self, probe, png, nonce, fields):
+            assert probe == "10" and nonce == NONCE
+        def verify(self, png):
+            checked.append(png)
+            return {"probe_id": "10", "count": 3}
+    monkeypatch.setattr(guard_module, "ImageProbeGuard", Guard)
+    monkeypatch.setattr(ocr_module, "read_probe_ocr", lambda *_: {"visible_probes": [
+        {"id": "10", "count": 3, "image_text_bounds": {"x": 1, "y": 2, "width": 3, "height": 4}}]})
+    def execute(request):
+        request["_pre_input_guard"]()
+        backend.calls.append(request)
+        return {"state": "executed", "ble_connected": True}
+    backend.execute = execute
+    observer.rows = []
+    result = run_experiment("image-scroll", probe_id="10", expected_count=3, vertical=2, **kwargs)
+    assert result["state"] == "executed" and result["verified"] is False
+    request = backend.calls[0]
+    assert request["op"] == "scroll" and request["args"] == {"v": 2, "h": 0}
+    assert request["_dispatch_ttl_seconds"] == 1
+    assert len(checked) == 2 and backend.closed == 1
+
+
+def test_image_scroll_stale_expected_count_refuses_before_serial_open(tmp_path, monkeypatch):
+    import phonelab.local_ocr as ocr_module
+    kwargs, observer, backend, opens, private = setup(tmp_path)
+    monkeypatch.setattr(ocr_module, "read_probe_ocr", lambda *_: {"visible_probes": [
+        {"id": "10", "count": 4}]})
+    result = run_experiment("image-scroll", probe_id="10", expected_count=3, vertical=-1, **kwargs)
+    assert result["state"] == "NOT_SENT" and not opens and not backend.calls
+
+
+def test_image_scroll_cli_requires_probe_count_and_vertical():
+    args = page_experiments._parser().parse_args([
+        "image-scroll", "--probe-id", "10", "--expected-count", "2", "--vertical", "-1"])
+    assert args.operation == "image-scroll" and args.expected_count == 2 and args.vertical == -1

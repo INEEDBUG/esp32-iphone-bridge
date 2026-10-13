@@ -261,28 +261,46 @@ class PageObservedScrollExperiment(_PageObservedPointerAction):
         return self._at_pointer(pointer_sequence, 'scroll', {'v': vertical, 'h': 0})
 
 
-class PageImageLocatedClickExperiment(_OnePageAction):
-    """One click located by fresh pixels, without requiring browser hover events.
-
-    Image processing is bounded preparation; the HID action still gets at most
-    one second. Every final PNG keeps its original two-second freshness bound.
-    """
+class _PageImageLocatedActionExperiment(_OnePageAction):
+    """Shared fresh-image guard and one-second dispatch for a page action."""
     preparation_seconds = 5.0
     dispatch_seconds = 1.0
     observation_max_age = .25
 
-    def __init__(self, *args, image_guard, **kwargs):
+    def __init__(self, *args, image_guard, expected_count=None, probe_id=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.image_guard = image_guard
-
-    def click(self):
-        return self._execute_one('click', {})
+        self.expected_count = expected_count
+        self.probe_id = probe_id
 
     def _before_dispatch(self, snapshot=None):
         if snapshot is None:
             raise PageScopeError('fresh image location required')
-        self.image_guard.verify(snapshot.image_bytes)
-        # Processing time never renews a frame or relaxes the freshness limit.
+        observed = self.image_guard.verify(snapshot.image_bytes)
+        if self.expected_count is not None:
+            if (not isinstance(observed, dict) or observed.get('probe_id') != self.probe_id
+                    or observed.get('count') != self.expected_count):
+                raise PageScopeError('current target image/count changed')
         if not 0 <= self.clock() - snapshot.metadata['received_monotonic'] <= 2:
             raise PageScopeError('image location expired during validation')
         self._check_cancelled()
+
+
+class PageImageLocatedClickExperiment(_PageImageLocatedActionExperiment):
+    """One click located by fresh pixels, without requiring browser hover events."""
+    def click(self):
+        return self._execute_one('click', {})
+
+
+class PageImageLocatedScrollExperiment(_PageImageLocatedActionExperiment):
+    """One small wheel action while the pointer is image-verified on a probe."""
+    def __init__(self, *args, probe_id, expected_count, **kwargs):
+        if (not isinstance(probe_id, str) or probe_id not in {f'{n:02d}' for n in range(1, 26)}
+                or type(expected_count) is not int or not 0 <= expected_count <= 999999):
+            raise PageScopeError('current synthetic probe id and count are required')
+        super().__init__(*args, probe_id=probe_id, expected_count=expected_count, **kwargs)
+
+    def scroll(self, vertical):
+        if type(vertical) is not int or vertical == 0 or not -3 <= vertical <= 3:
+            raise PageScopeError('one nonzero vertical wheel action of at most 3 is required')
+        return self._execute_one('scroll', {'v': vertical, 'h': 0})

@@ -104,16 +104,47 @@ def plan_pointer_step(probe_id, png, nonce, ocr_result, *, pointer_fn=_pointer_f
             return {"kind": "wake", "dx": 1, "dy": 1, "goal": goal,
                     "reason": "pointer_not_unique"}
         return {"kind": "stop", "reason": "pointer_not_unique"}
-    error_x, error_y = goal[0] - float(pointer.center_x), goal[1] - float(pointer.center_y)
-    if math.hypot(error_x, error_y) <= CLICK_TOLERANCE_PX:
-        return {"kind": "click", "goal": goal, "pointer": (float(pointer.center_x), float(pointer.center_y)),
-                "pixel_error": math.hypot(error_x, error_y)}
+    pointer_x, pointer_y = float(pointer.center_x), float(pointer.center_y)
+    # Keep the pointer disc clear of the selected OCR label. Route along one
+    # axis at a time: use a clear x to descend, or a row below the label to
+    # approach horizontally. Re-evaluate from each fresh frame.
+    margin = 20.0
+    left, right = x - margin, x + width + margin
+    top, bottom = y - margin, y + height + margin
+    if x <= pointer_x <= x + width and y <= pointer_y <= y + height:
+        return {"kind": "stop", "reason": "pointer_inside_label_safety_margin"}
+    if math.hypot(goal[0] - pointer_x, goal[1] - pointer_y) <= CLICK_TOLERANCE_PX and pointer_y >= bottom:
+        return {"kind": "click", "goal": goal, "pointer": (pointer_x, pointer_y),
+                "pixel_error": math.hypot(goal[0] - pointer_x, goal[1] - pointer_y)}
+    if pointer_y >= bottom:
+        if abs(pointer_x - goal[0]) <= 0.5:
+            waypoint = goal
+        else:
+            waypoint = (goal[0], pointer_y)
+    elif pointer_x <= left or pointer_x >= right:
+        waypoint = (pointer_x, goal[1])
+    elif pointer_y <= top:
+        candidates = [value for value in (left, right) if 35 < value < 793]
+        if not candidates:
+            return {"kind": "stop", "reason": "no_safe_label_lane"}
+        safe_x = min(candidates, key=lambda value: abs(value - pointer_x))
+        waypoint = (safe_x, pointer_y)
+    elif pointer_y < y:
+        waypoint = (pointer_x, top - 1.0)
+    else:
+        waypoint = (pointer_x, bottom + 1.0)
+    error_x, error_y = waypoint[0] - pointer_x, waypoint[1] - pointer_y
     dx = max(-MAX_MOVE_AXIS, min(MAX_MOVE_AXIS, round(error_x)))
     dy = max(-MAX_MOVE_AXIS, min(MAX_MOVE_AXIS, round(error_y)))
     if dx == 0 and dy == 0:
-        dx = 1 if error_x > 0 else -1
-    return {"kind": "move", "dx": dx, "dy": dy, "goal": goal,
-            "pointer": (float(pointer.center_x), float(pointer.center_y)),
+        if error_x:
+            dx = 1 if error_x > 0 else -1
+        elif error_y:
+            dy = 1 if error_y > 0 else -1
+        else:
+            return {"kind": "stop", "reason": "route_stalled"}
+    return {"kind": "move", "dx": dx, "dy": dy, "goal": goal, "waypoint": waypoint,
+            "pointer": (pointer_x, pointer_y),
             "pixel_error": math.hypot(error_x, error_y)}
 
 
@@ -199,8 +230,11 @@ def run_trials(probes, rounds, *, execute, initial_image, initial_ocr, run_conte
                observer, experiment, ocr_reader, pointer_fn=_pointer_from_png,
                stop_token=None, evidence_root, clock=time.monotonic, sleep=time.sleep,
                snapshot_validator=_validate_snapshot, click_verify_polls=CLICK_VERIFY_POLLS,
-               click_verify_interval=CLICK_VERIFY_INTERVAL, started_monotonic=None):
+               click_verify_interval=CLICK_VERIFY_INTERVAL, started_monotonic=None,
+               click_mode="pointer-event"):
     probes = validate_trial_request(probes, rounds)
+    if click_mode not in {"pointer-event", "image"}:
+        raise ValueError("unsupported click mode")
     if (type(click_verify_polls) is not int or not 1 <= click_verify_polls <= 16
             or type(click_verify_interval) not in (int, float)
             or not math.isfinite(click_verify_interval) or not 0 < click_verify_interval <= 1):
@@ -219,13 +253,18 @@ def run_trials(probes, rounds, *, execute, initial_image, initial_ocr, run_conte
     deadline = start + MAX_RUNTIME_SECONDS
     counts = {row["id"]: row["count"] for row in initial_ocr.get("visible_probes", [])
               if isinstance(row, dict) and isinstance(row.get("id"), str) and type(row.get("count")) is int}
-    if execute and (type(initial_ocr.get("summary_clicks")) is not int
-                    or initial_ocr["summary_clicks"] < 0):
+    initial_summary = initial_ocr.get("summary_clicks")
+    if execute and click_mode == "pointer-event" and (
+            type(initial_summary) is not int or initial_summary < 0):
         raise ValueError("visible synthetic click summary is unavailable")
+    if execute and click_mode == "image" and initial_summary is not None and (
+            type(initial_summary) is not int or initial_summary < 0):
+        raise ValueError("synthetic click summary is malformed")
     current_ocr = initial_ocr
     current_image = Path(initial_image)
     action_count = 0
     verified_clicks = 0
+    summary_states = []
     move_counts = {probe: 0 for probe in probes}
     try:
         if not execute:
@@ -252,6 +291,8 @@ def run_trials(probes, rounds, *, execute, initial_image, initial_ocr, run_conte
                         "probe_id": probe_id, "plan": plan})
                     if plan["kind"] == "stop":
                         raise RuntimeError("image planning stopped")
+                    prior_target_count = counts.get(probe_id)
+                    prior_summary_clicks = current_ocr.get("summary_clicks")
                     if plan["kind"] in {"move", "wake"}:
                         if move_counts[probe_id] >= MAX_MOVES_PER_PROBE:
                             raise RuntimeError("per-target movement limit reached")
@@ -267,19 +308,24 @@ def run_trials(probes, rounds, *, execute, initial_image, initial_ocr, run_conte
                     else:
                         if counts.get(probe_id) != initial_count:
                             raise RuntimeError("target count changed before click")
-                        pointer_seq = _latest_pointer_sequence(observer, run_context, probe_id, clock=clock)
-                        if pointer_seq is None:
-                            raise RuntimeError("latest trusted pointer is not on the selected probe")
+                        if click_mode == "pointer-event":
+                            pointer_seq = _latest_pointer_sequence(observer, run_context, probe_id, clock=clock)
+                            if pointer_seq is None:
+                                raise RuntimeError("latest trusted pointer is not on the selected probe")
+                        else:
+                            pointer_seq = None
                         before_value = observer.events(run_context["run_id"])
                         before_rows = _validate_run_events(before_value, run_context)
                         if before_rows is None:
                             raise RuntimeError("page run or nonce changed")
-                        operation = "click"
-                        args = {"pointer_seq": pointer_seq}
+                        if click_mode == "image":
+                            operation = "image-click"
+                            args = {"probe_id": probe_id, "expected_count": prior_target_count}
+                        else:
+                            operation = "click"
+                            args = {"pointer_seq": pointer_seq}
                     if stop_token.is_set():
                         raise RuntimeError("stopped")
-                    prior_summary_clicks = current_ocr.get("summary_clicks")
-                    prior_target_count = counts.get(probe_id)
                     action_count += 1
                     result = experiment(operation, **args, stop_token=stop_token)
                     action_dir = _archive_action(root, action_count, result)
@@ -299,9 +345,13 @@ def run_trials(probes, rounds, *, execute, initial_image, initial_ocr, run_conte
                         raise RuntimeError("after screenshot is missing")
                     after_ocr = ocr_reader(after_image, run_context["nonce"])
                     after_row = _target_bounds(after_ocr, probe_id)
-                    if (after_row is None or type(after_ocr.get("summary_clicks")) is not int
-                            or after_ocr["summary_clicks"] < 0):
+                    after_summary = after_ocr.get("summary_clicks")
+                    if after_row is None:
                         raise RuntimeError("target is no longer uniquely visible")
+                    if after_summary is not None and (type(after_summary) is not int or after_summary < 0):
+                        raise RuntimeError("synthetic click summary is malformed")
+                    if click_mode == "pointer-event" and after_summary is None:
+                        raise RuntimeError("visible synthetic click summary is unavailable")
                     if operation == "move":
                         move_counts[probe_id] += 1
                         events = _validate_run_events(observer.events(run_context["run_id"]), run_context)
@@ -335,11 +385,22 @@ def run_trials(probes, rounds, *, execute, initial_image, initial_ocr, run_conte
                         if delayed_row is None:
                             raise RuntimeError("delayed target OCR is ambiguous")
                         delayed_count = delayed_row[0]["count"]
+                        delayed_summary = delayed_ocr.get("summary_clicks")
+                        if delayed_summary is not None and (type(delayed_summary) is not int or delayed_summary < 0):
+                            raise RuntimeError("delayed synthetic click summary is malformed")
                         if delayed_count == initial_count + 1:
-                            if delayed_ocr.get("summary_clicks") != current_ocr.get("summary_clicks", 0) + 1:
-                                raise RuntimeError("page click summary did not increase by exactly one")
-                            if delayed_ocr.get("summary_last") != probe_id:
-                                raise RuntimeError("page last-click summary names a different probe")
+                            summary_verified = None
+                            baseline_summary = prior_summary_clicks
+                            if delayed_summary is not None:
+                                if delayed_ocr.get("summary_last") != probe_id:
+                                    raise RuntimeError("page last-click summary names a different probe")
+                                if baseline_summary is not None:
+                                    if delayed_summary != baseline_summary + 1:
+                                        raise RuntimeError("page click summary did not increase by exactly one")
+                                    summary_verified = True
+                            elif click_mode == "pointer-event" and delayed_summary is None:
+                                raise RuntimeError("visible synthetic click summary is unavailable")
+                            summary_states.append(summary_verified)
                             current_image, current_ocr = delayed_path, delayed_ocr
                             counts[probe_id] = delayed_count
                             delayed_baseline = initial_count
@@ -347,6 +408,7 @@ def run_trials(probes, rounds, *, execute, initial_image, initial_ocr, run_conte
                             _append_jsonl(steps_path, {"stage": "click_verified", "round": round_number,
                                 "probe_id": probe_id, "before_count": delayed_baseline,
                                 "after_count": delayed_count, "trusted_event": True,
+                                "summary_verified": summary_verified,
                                 "evidence": str(Path("actions") / action_dir.name)})
                             break
                         if delayed_count != initial_count:
@@ -357,6 +419,8 @@ def run_trials(probes, rounds, *, execute, initial_image, initial_ocr, run_conte
                 else:
                     raise RuntimeError("per-target movement limit reached")
         return {"state": "completed", "verified_clicks": verified_clicks,
+                "summary_verified": (True if summary_states and all(value is True for value in summary_states)
+                                     else None),
                 "actions": action_count, "evidence_path": str(root)}
     except BaseException:
         return {"state": "stopped", "verified_clicks": verified_clicks,
@@ -382,6 +446,8 @@ def _parser():
     parser.add_argument("--execute", action="store_true", help="authorize the requested bounded page actions")
     parser.add_argument("--probes", nargs="+", help="distinct synthetic probe IDs, for example 01 02")
     parser.add_argument("--rounds", type=int, choices=(1, 2), default=1)
+    parser.add_argument("--image-clicks", action="store_true",
+                        help="use the reviewed image-guard click path; still requires --execute")
     return parser
 
 
@@ -442,9 +508,10 @@ def main(argv=None):
             result = run_trials(probes, args.rounds, execute=True, initial_image=initial_image,
                 initial_ocr=initial_ocr, run_context=run_context, observer=client,
                 experiment=experiment, ocr_reader=_run_ocr, stop_token=token,
-                evidence_root=trial_root / "matrix", started_monotonic=cli_started)
+                evidence_root=trial_root / "matrix", started_monotonic=cli_started,
+                click_mode="image" if args.image_clicks else "pointer-event")
         (trial_root / "run.json").write_text(json.dumps({key: result[key] for key in
-            ("state", "verified_clicks", "actions", "error_code") if key in result},
+            ("state", "verified_clicks", "summary_verified", "actions", "error_code") if key in result},
             sort_keys=True, separators=(",", ":")), encoding="utf-8")
         print(json.dumps(result, sort_keys=True, separators=(",", ":")))
         return 0 if result["state"] in {"observed", "completed"} else 1
