@@ -95,9 +95,14 @@ def _blue_button_rectangles(image, text_bounds, pointer):
     def row_runs(y):
         base = y * width
         xs = [x for x in range(width) if mask[base + x]]
-        runs = _line_runs(xs, minimum=80)
-        if abs(y - cursor_y) > radius or len(runs) < 2:
+        near_cursor = abs(y - cursor_y) <= radius
+        # Keep shorter fragments only while testing whether this row's gap is
+        # fully explained by the verified cursor. They cannot stand alone.
+        runs = _line_runs(xs, minimum=3 if near_cursor else 80)
+        if not near_cursor:
             return runs
+        if len(runs) < 2:
+            return [run for run in runs if run[1] - run[0] >= 80]
         merged = []
         for run in runs:
             if merged:
@@ -113,7 +118,7 @@ def _blue_button_rectangles(image, text_bounds, pointer):
                     merged[-1] = (left, run[1])
                     continue
             merged.append(run)
-        return merged
+        return [run for run in merged if run[1] - run[0] >= 80]
 
     rows = {}
     for y in range(y0, y1):
