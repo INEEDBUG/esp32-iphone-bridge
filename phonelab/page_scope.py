@@ -127,7 +127,7 @@ class _OnePageAction:
                 if state['state'] != 'progress_observed' or state['counter'] <= previous_counter:
                     raise PageScopeError('synthetic page progression lost before input')
                 previous_counter = state['counter']
-                self._before_dispatch(before)
+                self._before_hello(before)
                 def final_input_guard():
                     nonlocal before, previous_counter
                     self._check_cancelled()
@@ -173,6 +173,12 @@ class _OnePageAction:
 
     def _before_dispatch(self, snapshot=None):
         pass
+
+    def _before_hello(self, snapshot=None):
+        # This hook runs after UART open but before serial hello. Preserve
+        # existing early checks for ordinary scopes; image-located scopes may
+        # defer costly pixel/OCR checks to the mandatory post-hello guard.
+        self._before_dispatch(snapshot)
 
     def _check_cancelled(self):
         if self.cancel_token.is_set():
@@ -285,6 +291,15 @@ class _PageImageLocatedActionExperiment(_OnePageAction):
         self.image_guard = image_guard
         self.expected_count = expected_count
         self.probe_id = probe_id
+
+    def _before_hello(self, snapshot=None):
+        if snapshot is None:
+            raise PageScopeError('fresh image receipt required')
+        received = snapshot.metadata.get('received_monotonic')
+        if (type(received) not in (int, float) or not math.isfinite(received)
+                or not 0 <= self.clock() - received <= 2):
+            raise PageScopeError('image receipt expired before serial hello')
+        self._check_cancelled()
 
     def _before_dispatch(self, snapshot=None):
         if snapshot is None:

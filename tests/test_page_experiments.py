@@ -240,18 +240,22 @@ def test_image_click_uses_local_pixels_and_no_browser_hover_coordinates(tmp_path
     import phonelab.local_ocr as ocr_module
     kwargs, observer, backend, opens, private = setup(tmp_path)
     checked = []
+    transport = []
     class Guard:
         def __init__(self, probe, png, nonce, fields):
             assert probe == "10" and nonce == NONCE
             assert fields['synthetic'] is True
         def verify(self, png):
+            assert transport == ["hello"]
             checked.append(png)
             return {"probe_id": "10", "count": 0}
     monkeypatch.setattr(guard_module, "ImageProbeGuard", Guard)
     monkeypatch.setattr(ocr_module, "read_probe_ocr", lambda *_: {"synthetic":True,
         "visible_probes":[{"id":"10", "count":0}]})
     def execute(request):
+        transport.append("hello")
         request["_pre_input_guard"]()
+        transport.append("requested_operation")
         backend.calls.append(request)
         return {"state":"executed", "ble_connected":True}
     backend.execute = execute
@@ -259,7 +263,9 @@ def test_image_click_uses_local_pixels_and_no_browser_hover_coordinates(tmp_path
     result = run_experiment("image-click", probe_id="10", expected_count=0, **kwargs)
     assert result["state"] == "executed" and result["verified"] is False
     assert len(backend.calls) == 1 and backend.calls[0]["op"] == "click"
-    assert len(checked) == 2 and backend.closed == 1
+    assert backend.calls[0]["args"] == {}  # no browser/event coordinates reach the image path
+    assert len(checked) == 1 and transport == ["hello", "requested_operation"]
+    assert backend.closed == 1
 
 
 def test_image_click_refuses_old_expected_count_before_open(tmp_path, monkeypatch):
@@ -291,17 +297,21 @@ def test_image_scroll_rechecks_image_and_sends_only_scroll_wire(tmp_path, monkey
     import phonelab.local_ocr as ocr_module
     kwargs, observer, backend, opens, private = setup(tmp_path)
     checked = []
+    transport = []
     class Guard:
         def __init__(self, probe, png, nonce, fields):
             assert probe == "10" and nonce == NONCE
         def verify(self, png):
+            assert transport == ["hello"]
             checked.append(png)
             return {"probe_id": "10", "count": 3}
     monkeypatch.setattr(guard_module, "ImageProbeGuard", Guard)
     monkeypatch.setattr(ocr_module, "read_probe_ocr", lambda *_: {"visible_probes": [
         {"id": "10", "count": 3, "image_text_bounds": {"x": 1, "y": 2, "width": 3, "height": 4}}]})
     def execute(request):
+        transport.append("hello")
         request["_pre_input_guard"]()
+        transport.append("requested_operation")
         backend.calls.append(request)
         return {"state": "executed", "ble_connected": True}
     backend.execute = execute
@@ -311,7 +321,8 @@ def test_image_scroll_rechecks_image_and_sends_only_scroll_wire(tmp_path, monkey
     request = backend.calls[0]
     assert request["op"] == "scroll" and request["args"] == {"v": 2, "h": 0}
     assert request["_dispatch_ttl_seconds"] == 1
-    assert len(checked) == 2 and backend.closed == 1
+    assert len(checked) == 1 and transport == ["hello", "requested_operation"]
+    assert backend.closed == 1
 
 
 def test_image_scroll_stale_expected_count_refuses_before_serial_open(tmp_path, monkeypatch):

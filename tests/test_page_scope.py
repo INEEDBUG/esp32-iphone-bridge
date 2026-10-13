@@ -222,7 +222,7 @@ def test_image_text_type_accepts_only_fixed_phrase_from_empty_field_and_stays_un
     request = backend.calls[0]
     assert request["op"] == "type" and request["args"] == {"text": "test123!@#"}
     assert request["_dispatch_ttl_seconds"] == 1.0
-    assert len(guard.images) == 2
+    assert len(guard.images) == 1
     assert result["verified"] is False and result["lock_state"] == "UNKNOWN"
 
 
@@ -290,7 +290,7 @@ def test_image_text_backspace_accepts_nonempty_prefix_and_sends_one_key(prefix):
     result = experiment.backspace()
     assert result["verified"] is False and len(backend.calls) == 1
     assert backend.calls[0]["op"] == "key" and backend.calls[0]["args"] == {"key": "backspace"}
-    assert backend.closed == 1 and len(guard.images) == 2
+    assert backend.closed == 1 and len(guard.images) == 1
 
 
 @pytest.mark.parametrize("text", ["not approved", "test123\n"])
@@ -322,7 +322,7 @@ def test_image_text_guard_mismatch_closes_without_dispatch(guard_result):
 
 
 def test_image_text_final_guard_catches_focus_change_after_serial_hello():
-    guard = TextGuard(lambda attempt: {"role": "synthetic-text", "focused": attempt == 1,
+    guard = TextGuard(lambda attempt: {"role": "synthetic-text", "focused": False,
         "caret_at_end": True, "text": ""})
     experiment, observer, backend, opened = text_setup(guard=guard)
     transport_steps = []
@@ -336,7 +336,7 @@ def test_image_text_final_guard_catches_focus_change_after_serial_hello():
     with pytest.raises(PageScopeError):
         experiment.type_phrase("test123")
     assert transport_steps == ["hello"]
-    assert len(guard.images) == 2 and backend.calls == [] and backend.closed == 1
+    assert len(guard.images) == 1 and backend.calls == [] and backend.closed == 1
 
 
 def test_image_text_cancel_after_open_closes_without_action_or_retry():
@@ -545,7 +545,7 @@ def test_image_click_rechecks_pixels_and_freshness_before_action(fault):
     class ImageGuard:
         def verify(self, png):
             calls.append(png)
-            if fault == "moved_after_hello" and len(calls) == 2: raise ValueError("pointer moved")
+            if fault == "moved_after_hello": raise ValueError("pointer moved after hello")
             if fault == "processing_expired": observer.clock.sleep(2.1)
             if fault == "stopped": movement.cancel_token.set()
     click = PageImageLocatedClickExperiment(observer, target=movement.target,
@@ -579,9 +579,48 @@ def test_image_click_has_separate_preparation_bound_and_one_second_hid_bound():
         return {"state":"executed", "ble_connected":True}
     backend.execute = execute
     result = click.click()
-    assert len(checked) == 2 and result["verified"] is False
+    assert len(checked) == 1 and result["verified"] is False
     assert backend.calls[0]["_dispatch_ttl_seconds"] == 1
     assert backend.closed == 1
+
+
+def test_image_guard_runs_once_after_serial_hello_and_before_requested_operation():
+    from phonelab.page_scope import PageImageLocatedClickExperiment
+    movement, observer, backend, opened = setup()
+    order = []
+    class ImageGuard:
+        def verify(self, png):
+            order.append("image_guard")
+            return {"probe_id": "01", "count": 0}
+    click = PageImageLocatedClickExperiment(observer, target=movement.target,
+        run_id=movement.run_id, nonce=movement.nonce, test_id=movement.test_id,
+        backend_opener=lambda: order.append("open") or backend,
+        lease_factory=movement.lease_factory, cancel_token=movement.cancel_token,
+        clock=movement.clock, sleep=movement.sleep, image_guard=ImageGuard(),
+        expected_count=0, probe_id="01")
+    def execute(request):
+        order.append("hello")
+        request["_pre_input_guard"]()
+        order.append("requested_operation")
+        backend.calls.append(request)
+        return backend.result
+    backend.execute = execute
+    result = click.click()
+    assert order == ["open", "hello", "image_guard", "requested_operation"]
+    assert result["verified"] is False and len(backend.calls) == 1
+
+
+def test_ordinary_movement_keeps_its_existing_early_and_final_hooks():
+    experiment, observer, backend, opened = setup()
+    calls = []
+    experiment._before_dispatch = lambda snapshot=None: calls.append(snapshot)
+    def execute(request):
+        request["_pre_input_guard"]()
+        backend.calls.append(request)
+        return backend.result
+    backend.execute = execute
+    experiment.move(1, 0)
+    assert len(calls) == 2 and calls[0] is not None and calls[1] is not None
 
 
 def test_image_scroll_requires_unique_current_probe_guard_and_emits_only_wheel():
@@ -604,7 +643,7 @@ def test_image_scroll_requires_unique_current_probe_guard_and_emits_only_wheel()
     backend.execute = execute
     result = scroll.scroll(-2)
     assert result["verified"] is False and result["op"] == "scroll"
-    assert len(checked) == 2
+    assert len(checked) == 1
     assert backend.calls[0]["op"] == "scroll" and backend.calls[0]["args"] == {"v": -2, "h": 0}
     assert backend.calls[0]["_dispatch_ttl_seconds"] == 1
     assert backend.closed == 1
@@ -643,6 +682,11 @@ def test_image_scroll_guard_must_stay_fresh_and_bound_to_expected_probe(fault):
         backend_opener=movement.backend_opener, lease_factory=movement.lease_factory,
         cancel_token=movement.cancel_token, clock=movement.clock, sleep=movement.sleep,
         image_guard=Guard(), probe_id="10", expected_count=2)
+    def execute(request):
+        request["_pre_input_guard"]()
+        backend.calls.append(request)
+        return {"state": "executed", "ble_connected": True}
+    backend.execute = execute
     with pytest.raises(PageScopeError): scroll.scroll(1)
     assert backend.calls == []
 
@@ -654,7 +698,7 @@ def test_image_scroll_stop_after_backend_open_cancels_final_guard_before_wire():
     class Guard:
         def verify(self, png):
             checks.append(png)
-            if len(checks) == 2:
+            if len(checks) == 1:
                 movement.cancel_token.set()
             return {"probe_id": "10", "count": 1}
     scroll = PageImageLocatedScrollExperiment(observer, target=movement.target,
@@ -669,5 +713,5 @@ def test_image_scroll_stop_after_backend_open_cancels_final_guard_before_wire():
     backend.execute = execute
     with pytest.raises(PageScopeError):
         scroll.scroll(1)
-    assert len(checks) == 2 and opened == [True]
+    assert len(checks) == 1 and opened == [True]
     assert not backend.calls and backend.closed == 1
