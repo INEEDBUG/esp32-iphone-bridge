@@ -1,0 +1,9 @@
+Arduino-ESP32 NVS fail-closed patch
+
+Upstream file: cores/esp32/esp32-hal-misc.c, Arduino-ESP32 3.3.11
+Copyright 2015-2016 Espressif Systems (Shanghai) PTE LTD
+Upstream source portions are licensed under Apache License 2.0; see LICENSE in this directory.
+Source: https://github.com/espressif/arduino-esp32/blob/3.3.11/cores/esp32/esp32-hal-misc.c
+
+PhoneLab modifications replace automatic NVS erasure/retry with a fail-closed halt.
+The complete Arduino core and compiled binaries are not distributed here.

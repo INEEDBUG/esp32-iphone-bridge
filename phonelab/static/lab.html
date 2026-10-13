@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="referrer" content="no-referrer">
+  <title>PhoneLab browser test</title>
+  <style>
+    :root { color-scheme: light; font: 16px/1.45 system-ui, sans-serif; background: #f3f6fa; color: #172033; }
+    * { box-sizing: border-box; }
+    body { margin: 0 auto; max-width: 980px; padding: 18px; }
+    header, section { background: white; border: 1px solid #d8e0ea; border-radius: 14px; padding: 16px; margin: 12px 0; }
+    h1 { font-size: 1.45rem; margin: 0 0 6px; }
+    h2 { font-size: 1.1rem; margin: 0 0 12px; }
+    .muted { color: #536176; }
+    .badge { display: inline-block; border-radius: 99px; background: #e7f2ff; padding: 4px 10px; font: 700 .8rem ui-monospace, monospace; }
+    #probe-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 9px; }
+    .probe { min-height: 48px; border: 1px solid #285ec8; border-radius: 10px; background: #edf4ff; color: #123b84; font-weight: 700; touch-action: manipulation; }
+    .probe:active { background: #cfe0ff; transform: scale(.97); }
+    label { display: block; font-weight: 650; margin-bottom: 7px; }
+    input { width: 100%; min-height: 48px; border: 1px solid #9aa9bb; border-radius: 9px; padding: 10px 12px; font: inherit; }
+    #drag-source, #drop-target { border: 2px dashed #7588a2; border-radius: 10px; padding: 18px; margin: 12px 0; text-align: center; }
+    #drag-source { display: inline-block; background: #fff2d4; touch-action: none; }
+    #drop-target { min-height: 70px; background: #f2f8ed; }
+    #log { max-height: 260px; overflow: auto; background: #101827; color: #d5e3fa; border-radius: 9px; padding: 10px; font: 12px/1.4 ui-monospace, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .spacer { min-height: 65vh; display: grid; place-items: center; border: 1px dashed #a6b2c1; border-radius: 10px; margin: 16px 0; color: #596a82; }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .actions button { min-height: 44px; padding: 8px 14px; border-radius: 9px; border: 1px solid #647b9b; background: #f7f9fc; font: inherit; }
+    #visual-marker { position: fixed; width: 40px; height: 40px; right: 10px;
+      bottom: calc(env(safe-area-inset-bottom) + 10px); pointer-events: none; }
+    @media (max-width: 580px) { body { padding: 10px; } #probe-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>PhoneLab browser test surface</h1>
+    <div class="muted">Synthetic browser interaction only. These observations do not prove phone hardware control.</div>
+    <p>Test <b id="test-id"></b> · seed <b id="seed"></b> · fresh marker <span class="badge" id="nonce"></span></p>
+    <p id="delivery" class="muted">Waiting for browser events.</p>
+  </header>
+
+  <section>
+    <h2>Position-varied button probes</h2>
+    <p class="muted">Tap or click any numbered probe. The browser reports its own event fields.</p>
+    <p id="probe-summary" aria-live="polite">Browser-reported probe clicks: 0 | Last: none</p>
+    <div id="probe-grid">
+      <button class="probe" data-probe="01">Probe 01</button><button class="probe" data-probe="02">Probe 02</button>
+      <button class="probe" data-probe="03">Probe 03</button><button class="probe" data-probe="04">Probe 04</button>
+      <button class="probe" data-probe="05">Probe 05</button><button class="probe" data-probe="06">Probe 06</button>
+      <button class="probe" data-probe="07">Probe 07</button><button class="probe" data-probe="08">Probe 08</button>
+      <button class="probe" data-probe="09">Probe 09</button><button class="probe" data-probe="10">Probe 10</button>
+      <button class="probe" data-probe="11">Probe 11</button><button class="probe" data-probe="12">Probe 12</button>
+      <button class="probe" data-probe="13">Probe 13</button><button class="probe" data-probe="14">Probe 14</button>
+      <button class="probe" data-probe="15">Probe 15</button><button class="probe" data-probe="16">Probe 16</button>
+      <button class="probe" data-probe="17">Probe 17</button><button class="probe" data-probe="18">Probe 18</button>
+      <button class="probe" data-probe="19">Probe 19</button><button class="probe" data-probe="20">Probe 20</button>
+      <button class="probe" data-probe="21">Probe 21</button><button class="probe" data-probe="22">Probe 22</button>
+      <button class="probe" data-probe="23">Probe 23</button><button class="probe" data-probe="24">Probe 24</button>
+      <button class="probe" data-probe="25">Probe 25</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Text entry</h2>
+    <label for="test-text">Synthetic test text (do not enter passwords or personal data)</label>
+    <input id="test-text" type="text" autocomplete="off" placeholder="Type a harmless test phrase">
+  </section>
+
+  <section>
+    <h2>Drag and drop</h2>
+    <div id="drag-source" draggable="true">Drag this test item</div>
+    <div id="drop-target">Drop target: <span id="drop-state">empty</span></div>
+  </section>
+
+  <div class="spacer" id="scroll-marker-one">Scroll marker A · scroll down to marker B</div>
+  <div class="spacer" id="scroll-marker-two">Scroll marker B · continue to the bottom marker</div>
+  <div class="spacer" id="scroll-marker-three">Bottom scroll marker</div>
+
+  <canvas id="visual-marker" width="40" height="40" aria-hidden="true"></canvas>
+
+  <section>
+    <h2>Observed event log</h2>
+    <div class="actions"><button id="save-final" type="button">Save final text / scroll / drag state</button></div>
+    <pre id="log" aria-live="polite">No browser events recorded yet.</pre>
+  </section>
+
+  <script>
+    (() => {
+      "use strict";
+      const config = __PHONE_LAB_CONFIG__;
+      const syntheticTextCorpus = [
+        "test123",
+        "TEST123",
+        "Test 123",
+        "test123!@#",
+        "ASCII symbols: !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
+      ];
+      document.getElementById("test-id").textContent = config.testId;
+      document.getElementById("seed").textContent = config.seed;
+      document.getElementById("nonce").textContent = config.nonce;
+      let heartbeat = 0;
+      const marker = document.getElementById("visual-marker");
+      const markerContext = marker.getContext("2d", { alpha: false });
+      markerContext.imageSmoothingEnabled = false;
+      function fnv1a32Ascii(value) {
+        let hash = 0x811c9dc5;
+        for (let i = 0; i < value.length; i++) {
+          hash = Math.imul(hash ^ (value.charCodeAt(i) & 0xff), 0x01000193) >>> 0;
+        }
+        return hash >>> 0;
+      }
+      function crc16CcittFalse(bytes) {
+        let crc = 0xffff;
+        for (const byte of bytes) {
+          crc ^= byte << 8;
+          for (let bit = 0; bit < 8; bit++) {
+            crc = ((crc << 1) ^ ((crc & 0x8000) ? 0x1021 : 0)) & 0xffff;
+          }
+        }
+        return crc;
+      }
+      function drawVisualMarker(counter) {
+        const payload = new Uint8Array(8);
+        const view = new DataView(payload.buffer);
+        view.setUint32(0, fnv1a32Ascii(config.nonce), false);
+        view.setUint16(4, counter & 0xffff, false);
+        view.setUint16(6, crc16CcittFalse(payload.subarray(0, 6)), false);
+        const image = markerContext.createImageData(40, 40);
+        const colors = {
+          cyan: [0, 200, 220], magenta: [220, 0, 200], yellow: [250, 200, 0],
+          blue: [30, 80, 240], one: [20, 20, 20], zero: [250, 250, 250]
+        };
+        for (let row = 0; row < 10; row++) {
+          for (let col = 0; col < 10; col++) {
+            let color;
+            if (row === 0) color = colors.cyan;
+            else if (row === 9) color = colors.magenta;
+            else if (col === 0) color = colors.yellow;
+            else if (col === 9) color = colors.blue;
+            else {
+              const bitIndex = (row - 1) * 8 + (col - 1);
+              const bit = (payload[bitIndex >> 3] >> (7 - (bitIndex & 7))) & 1;
+              color = bit ? colors.one : colors.zero;
+            }
+            for (let dy = 0; dy < 4; dy++) {
+              for (let dx = 0; dx < 4; dx++) {
+                const offset = (((row * 4 + dy) * 40) + col * 4 + dx) * 4;
+                image.data[offset] = color[0]; image.data[offset + 1] = color[1];
+                image.data[offset + 2] = color[2]; image.data[offset + 3] = 255;
+              }
+            }
+          }
+        }
+        markerContext.putImageData(image, 0, 0);
+      }
+      drawVisualMarker(heartbeat);
+      setInterval(() => {
+        heartbeat = (heartbeat + 1) & 0xffff;
+        document.getElementById("nonce").textContent = `${config.nonce}:${heartbeat}`;
+        drawVisualMarker(heartbeat);
+      }, 500);
+      const probes = [...document.querySelectorAll(".probe")];
+      const probeHits = new Map(probes.map(button => [button.dataset.probe, 0]));
+      let trustedProbeClicks = 0;
+      probes.forEach(button => { button.textContent = `Probe ${button.dataset.probe} (0)`; });
+      let randomState = (Number.parseInt(config.seed, 10) || hashSeed(config.seed)) >>> 0;
+      function hashSeed(value) {
+        let hash = 2166136261;
+        for (const char of value) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
+        return hash >>> 0;
+      }
+      function random() {
+        randomState = (Math.imul(randomState, 1664525) + 1013904223) >>> 0;
+        return randomState / 4294967296;
+      }
+      for (let i = probes.length - 1; i > 0; i--) {
+        const j = Math.floor(random() * (i + 1));
+        [probes[i], probes[j]] = [probes[j], probes[i]];
+      }
+      probes.forEach((button, index) => {
+        button.style.order = String(index);
+        button.style.transform = `translateY(${Math.round(random() * 12 - 6)}px)`;
+        if (index % 7 === 3) button.style.gridColumn = "span 2";
+      });
+
+      const log = document.getElementById("log");
+      const delivery = document.getElementById("delivery");
+      let seq = 0;
+      let dragState = "not-started";
+      let sendChain = Promise.resolve();
+      const entries = [];
+      function emit(event) {
+        const entry = { ...event, test_id: config.testId, seq: ++seq };
+        entries.push(entry);
+        log.textContent = entries.slice(-120).map(item => JSON.stringify(item)).join("\n");
+        sendChain = sendChain.then(async () => {
+          const response = await fetch("/events", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-PhoneLab-Run": config.runToken },
+            body: JSON.stringify({ test_id: config.testId, seq: entry.seq, event })
+          });
+          delivery.textContent = response.ok
+            ? `Stored ${entry.seq} browser-reported event(s).`
+            : `Event ${entry.seq} was not stored (HTTP ${response.status}).`;
+        }).catch(() => { delivery.textContent = "Event store unavailable; local browser log remains visible."; });
+      }
+      function describe(event) {
+        const target = event.target instanceof Element ? event.target : null;
+        const input = target && target.closest("#test-text");
+        const data = {
+          type: event.type,
+          isTrusted: event.isTrusted,
+          target: target ? (target.id || target.dataset.probe || target.tagName.toLowerCase()) : "window",
+          timeStamp: Math.round(event.timeStamp),
+          clientX: Number.isFinite(event.clientX) ? event.clientX : null,
+          clientY: Number.isFinite(event.clientY) ? event.clientY : null,
+          button: Number.isFinite(event.button) ? event.button : null
+        };
+        if (event.type === "beforeinput" || event.type === "input") {
+          const value = input ? input.value : "";
+          data.textLength = Math.min(value.length, 2000);
+          data.syntheticTextMatch = input ? syntheticTextCorpus.includes(value) : false;
+        }
+        if (event.type === "scroll") {
+          data.scrollX = window.scrollX;
+          data.scrollY = window.scrollY;
+          data.target = event.target === document ? "document" : (target && target.id) || "element";
+        }
+        if (event.type === "drop") data.dragState = dragState;
+        return data;
+      }
+      let lastPageGeometryAt = -Infinity;
+      let pendingPageGeometryTimer = null;
+      function emitPageGeometry() {
+        const visual = window.visualViewport;
+        const now = performance.now();
+        lastPageGeometryAt = now;
+        emit({
+          type: "page_geometry",
+          isTrusted: false,
+          target: "window",
+          timeStamp: Math.round(now),
+          clientX: null,
+          clientY: null,
+          button: null,
+          innerWidth: window.innerWidth,
+          innerHeight: window.innerHeight,
+          visualWidth: visual ? visual.width : window.innerWidth,
+          visualHeight: visual ? visual.height : window.innerHeight,
+          visualOffsetLeft: visual ? visual.offsetLeft : 0,
+          visualOffsetTop: visual ? visual.offsetTop : 0,
+          devicePixelRatio: window.devicePixelRatio
+        });
+      }
+      function requestPageGeometry() {
+        const remaining = 200 - (performance.now() - lastPageGeometryAt);
+        if (remaining <= 0) {
+          if (pendingPageGeometryTimer !== null) clearTimeout(pendingPageGeometryTimer);
+          pendingPageGeometryTimer = null;
+          emitPageGeometry();
+        } else if (pendingPageGeometryTimer === null) {
+          pendingPageGeometryTimer = setTimeout(() => {
+            pendingPageGeometryTimer = null;
+            requestPageGeometry();
+          }, remaining);
+        }
+      }
+      window.addEventListener("resize", requestPageGeometry, { passive: true });
+      if (window.visualViewport) {
+        window.visualViewport.addEventListener("resize", requestPageGeometry, { passive: true });
+      }
+      requestPageGeometry();
+
+      let lastPointerMoveAt = null;
+      let pendingPointerMove = null;
+      let pendingPointerMoveTimer = null;
+      function emitPendingPointerMove() {
+        const event = pendingPointerMove;
+        pendingPointerMove = null;
+        pendingPointerMoveTimer = null;
+        if (!event) return;
+        lastPointerMoveAt = performance.now();
+        emit(describe(event));
+      }
+      for (const name of ["pointerdown", "pointerup", "pointermove", "click", "keydown", "beforeinput", "input", "dragstart", "dragover", "drop"]) {
+        document.addEventListener(name, event => {
+          if (name === "pointermove") {
+            // Browser-reported calibration telemetry only; isTrusted is not hardware attestation.
+            const now = performance.now();
+            const remaining = lastPointerMoveAt === null ? 0 : 200 - (now - lastPointerMoveAt);
+            if (remaining > 0) {
+              pendingPointerMove = event;
+              if (pendingPointerMoveTimer === null) {
+                pendingPointerMoveTimer = setTimeout(emitPendingPointerMove, remaining);
+              }
+              return;
+            }
+            if (pendingPointerMoveTimer !== null) clearTimeout(pendingPointerMoveTimer);
+            pendingPointerMoveTimer = null;
+            pendingPointerMove = null;
+            lastPointerMoveAt = now;
+          }
+          if (name === "click" && event.isTrusted && event.target instanceof Element) {
+            const probe = event.target.closest(".probe");
+            if (probe && probeHits.has(probe.dataset.probe)) {
+              const key = probe.dataset.probe;
+              const hits = probeHits.get(key) + 1;
+              probeHits.set(key, hits);
+              probe.textContent = `Probe ${key} (${hits})`;
+              document.getElementById("probe-summary").textContent =
+                `Browser-reported probe clicks: ${++trustedProbeClicks} | Last: ${key}`;
+            }
+          }
+          if (name === "dragstart") dragState = "started";
+          if (name === "drop") {
+            dragState = "dropped";
+            document.getElementById("drop-state").textContent = "received drop event";
+          }
+          emit(describe(event));
+        }, true);
+      }
+      let lastScrollAt = -Infinity;
+      let pendingScrollEvent = null;
+      let pendingScrollTimer = null;
+      function emitPendingScroll() {
+        const event = pendingScrollEvent;
+        pendingScrollEvent = null;
+        pendingScrollTimer = null;
+        if (!event) return;
+        lastScrollAt = performance.now();
+        // Keep the browser's original event fields while reading settled scrollX/Y now.
+        emit(describe(event));
+      }
+      window.addEventListener("scroll", event => {
+        const now = performance.now();
+        const remaining = 80 - (now - lastScrollAt);
+        if (remaining <= 0) {
+          if (pendingScrollTimer !== null) clearTimeout(pendingScrollTimer);
+          pendingScrollTimer = null;
+          pendingScrollEvent = null;
+          lastScrollAt = now;
+          emit(describe(event));
+          return;
+        }
+        pendingScrollEvent = event;
+        if (pendingScrollTimer === null) {
+          pendingScrollTimer = setTimeout(emitPendingScroll, remaining);
+        }
+      }, { passive: true });
+      document.getElementById("drop-target").addEventListener("dragover", event => event.preventDefault());
+      document.getElementById("drop-target").addEventListener("drop", event => event.preventDefault());
+      document.getElementById("save-final").addEventListener("click", event => {
+        const value = document.getElementById("test-text").value;
+        const syntheticTextMatch = syntheticTextCorpus.includes(value);
+        emit({
+          type: "final_state",
+          isTrusted: event.isTrusted,
+          text: syntheticTextMatch ? value : null,
+          textLength: Math.min(value.length, 2000),
+          syntheticTextMatch,
+          scrollX: window.scrollX,
+          scrollY: window.scrollY,
+          dragState
+        });
+      });
+    })();
+  </script>
+</body>
+</html>
