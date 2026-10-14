@@ -37,15 +37,17 @@ def test_scroll_has_one_owner_session_and_a_full_guard_before_every_write(tmp_pa
     result=item.scroll(steps=3,vertical=1)
     assert result['state']=='executed' and result['verified'] is False
     assert len(opened)==1 and backend.closed==1
-    assert [r['op'] for r in backend.calls]==['scroll']*3
+    assert [r['op'] for r in backend.calls]==['move','scroll']*3
     assert len({r['session'] for r in backend.calls})==1
-    assert len({r['id'] for r in backend.calls})==3
-    assert guard.stages==['scroll']*3
+    assert len({r['id'] for r in backend.calls})==6
+    assert guard.stages==['move','scroll']*3
     assert result['before'].metadata['sequence']==3
-    assert len(item.evidence_steps)==3
-    assert all(r['args']=={'v':1,'h':0} and r['_dispatch_ttl_seconds']==1 for r in backend.calls)
+    assert len(item.evidence_steps)==6
+    assert [r['args'] for r in backend.calls if r['op']=='scroll']==[{'v':1,'h':0}]*3
+    assert [r['args'] for r in backend.calls if r['op']=='move']==[{'dx':0,'dy':1},{'dx':0,'dy':-1},{'dx':0,'dy':1}]
+    assert all(r['_dispatch_ttl_seconds']==1 for r in backend.calls)
     with pytest.raises(Exception):item.scroll(steps=3,vertical=1)
-    assert len(backend.calls)==3
+    assert len(backend.calls)==6
 
 
 @pytest.mark.parametrize('steps,vertical',[(0,1),(33,1),(True,1),(2,True),(2,2)])
@@ -121,3 +123,12 @@ def test_held_drag_deadline_never_renews_during_validation(tmp_path):
     guard.verify=slow
     with pytest.raises(Exception):item.drag(dx=80,dy=0)
     assert [r['op'] for r in backend.calls]==['move','press'] and backend.closed==1
+
+
+def test_scroll_cancel_after_wake_never_sends_wheel(tmp_path):
+    item,backend,_,_,_=make(tmp_path,'scroll');execute=backend.execute
+    def cancel_after_first(request):
+        reply=execute(request);StopStore(tmp_path).publish_stop();return reply
+    backend.execute=cancel_after_first
+    with pytest.raises(Exception):item.scroll(steps=4,vertical=1)
+    assert [r['op'] for r in backend.calls]==['move'] and backend.closed==1

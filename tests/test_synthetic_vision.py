@@ -253,3 +253,18 @@ def test_scanline_components_match_8_connected_reference_for_exhaustive_and_rand
     for width, height, raw in fixtures:
         actual = sorted(synthetic_vision._connected_components(raw, width, height))
         assert actual == _reference_components(raw, width, height)
+
+
+@pytest.mark.parametrize('edge_x',[28,800])
+def test_compact_edge_ui_cannot_compete_with_pointer_inside_page(edge_x):
+    png=screenshot(cursor=((414,1100),18,(110,110,110)),background=(255,255,255),
+                   extra=(((edge_x,200),18,(230,230,230)),))
+    result=detect_pointer(png,verified_marker=MARKER)
+    assert result is not None and (result.center_x,result.center_y)==(414,1100)
+    assert detect_pointer(screenshot(cursor=((edge_x,200),18,(230,230,230)),background=(255,255,255)),verified_marker=MARKER) is None
+
+
+@pytest.mark.parametrize('inside_x',[42,787])
+def test_complete_pointer_at_page_margin_remains_valid(inside_x):
+    result=detect_pointer(screenshot(cursor=((inside_x,1100),18,(110,110,110))),verified_marker=MARKER)
+    assert result is not None and result.center_x==inside_x

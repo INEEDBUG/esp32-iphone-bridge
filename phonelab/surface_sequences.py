@@ -124,7 +124,14 @@ class SurfaceScrollSequence(_SurfaceSequence):
     def scroll(self,*,steps,vertical):
         if type(steps) is not int or not 1<=steps<=32 or type(vertical) is not int or vertical not in (-1,1):
             raise ValueError('one to 32 unit wheels in one direction required')
-        return self._run([('scroll',{'v':vertical,'h':0}) for _ in range(steps)],maximum_seconds=120)
+        # Wheel reports alone need not keep the AssistiveTouch pointer visible.
+        # Alternate a bounded unheld unit move under its own fresh surface guard;
+        # net travel is at most one unit and no held input is introduced.
+        commands=[]
+        for index in range(steps):
+            commands.extend([('move',{'dx':0,'dy':1 if index%2==0 else -1}),
+                             ('scroll',{'v':vertical,'h':0})])
+        return self._run(commands,maximum_seconds=120)
 
 
 class SurfaceDragGesture(_SurfaceSequence):

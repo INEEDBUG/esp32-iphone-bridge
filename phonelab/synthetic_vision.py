@@ -202,7 +202,11 @@ def detect_pointer(png: bytes, *, verified_marker: VisualMarker) -> PointerCandi
             bounds = verified_marker.bounds
             overlaps_marker = not (max_x < bounds[0] or min_x >= bounds[0] + bounds[2]
                                    or max_y < bounds[1] or min_y >= bounds[1] + bounds[3])
-            if (not touches_edge and not overlaps_marker and 22 <= box_w <= 52 and 22 <= box_h <= 52
+            # The synthetic page action area excludes 20px horizontal screen edges.
+            # A compact browser-edge decoration is not an actionable pointer;
+            # keep the complete footprint inside that existing page region.
+            if (not touches_edge and not overlaps_marker and 20 <= min_x and max_x < 808
+                    and 22 <= box_w <= 52 and 22 <= box_h <= 52
                     and aspect >= 0.78 and 0.68 <= fill <= 0.96 and 150 <= area <= 1800):
                 # Shape score describes component geometry only, not a probability.
                 confidence = min(1.0, max(0.0, 0.55 + 0.25 * aspect + 0.2 * (1 - abs(fill - 0.78))))
