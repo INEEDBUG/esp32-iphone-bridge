@@ -37,7 +37,7 @@ Ordinary startup serves the local interface with the input backend **off**. USB 
 | **Image-guided click** | Small target samples, checked against trusted browser events and delayed real screenshots. Full 25-target acceptance remains open. |
 | **Small vertical scroll** | A fresh 10-sample alternating batch passed: five in each direction, with matching image displacement and unchanged click counts. Broader scrolling remains unverified. |
 | **Text / backspace** | The repaired firmware passed 35 actions covering uppercase, mixed case, spaces, digits, `!@#` and character-by-character deletion, with exact image/native-event checks. Earlier failed bursts remain recorded. |
-| **Pointer drag** | Five historical complete samples and three fresh samples on the repaired firmware passed image, native-event and visible-counter checks. A preparatory unheld move now synchronizes core state before press. |
+| **Pointer drag** | Five historical complete samples and five fresh samples after the Safari compatibility fix on the repaired firmware passed image, native-event and visible-counter checks. A preparatory unheld move now synchronizes core state before press. |
 | **Recovery** | One host-shutdown / board-USB recovery followed by a verified click. Three-round reconnect acceptance remains open. |
 | **Host validation** | Automated guard, protocol, cancellation, export and vision tests. These do not establish device behavior. |
 | **Still in progress** | Broader scrolling, sustained input stability and cross-device support. |
