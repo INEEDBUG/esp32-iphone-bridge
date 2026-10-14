@@ -13,6 +13,8 @@ PhoneLab is an experimental Windows lab for observing a real iPhone over USB and
 
 > **Fresh text samples verified.** The keyboard repair passed a 35-action text/symbol/deletion batch on the lab phone. Bidirectional 768-CSS-pixel scrolling and a 904-second restricted wheel loop also passed. See [Progress](docs/PROGRESS.md).
 
+> **Session paused — 2026-10-15.** Input, USB capture and the LAN test service are stopped at the user's request. The Home/Tips demonstration remains unfinished; opening AssistiveTouch does not establish Home navigation or app launch.
+
 ## How it works
 
 | Observe | Act | Verify |
