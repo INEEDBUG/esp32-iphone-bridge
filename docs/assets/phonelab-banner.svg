@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="440" viewBox="0 0 1280 440" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">PhoneLab — A local iPhone automation lab</title>
+  <desc id="desc">Windows observes an iPhone over USB. An ESP32 provides bounded BLE input. Observe, act, and verify.</desc>
+  <defs>
+    <linearGradient id="bg" x2="1280" y2="440" gradientUnits="userSpaceOnUse"><stop stop-color="#101C30"/><stop offset="1" stop-color="#07101E"/></linearGradient>
+    <linearGradient id="accent" x1="54" x2="1226" gradientUnits="userSpaceOnUse"><stop stop-color="#5EEAD4"/><stop offset="1" stop-color="#60A5FA"/></linearGradient>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse"><path d="M32 0H0V32" stroke="#334155" stroke-opacity=".22"/></pattern>
+  </defs>
+  <rect width="1280" height="440" rx="24" fill="url(#bg)"/>
+  <rect width="1280" height="440" rx="24" fill="url(#grid)"/>
+  <rect x="54" y="44" width="34" height="34" rx="10" fill="#5EEAD4"/>
+  <path d="M64 68V54H76M64 61H74" stroke="#0B1828" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <g font-family="Segoe UI, Arial, sans-serif">
+    <text x="104" y="67" fill="#A5B4C9" font-size="17" font-weight="600" letter-spacing="3">LOCAL DEVICE LAB</text>
+    <text x="52" y="177" fill="#F8FAFC" font-size="88" font-weight="700" letter-spacing="-4">PhoneLab</text>
+    <text x="56" y="228" fill="#E2E8F0" font-size="29">A local iPhone automation lab.</text>
+    <text x="56" y="266" fill="#A5B4C9" font-size="19">Real screens. Bounded input. Observable results.</text>
+    <rect x="56" y="324" width="158" height="48" rx="12" fill="#13283B" stroke="#29445A"/>
+    <circle cx="80" cy="348" r="5" fill="#5EEAD4"/><text x="96" y="355" fill="#DDFBF6" font-size="18">OBSERVE</text>
+    <path d="M228 348H252M246 342L252 348L246 354" stroke="#64748B" stroke-width="2"/>
+    <rect x="268" y="324" width="122" height="48" rx="12" fill="#13283B" stroke="#29445A"/>
+    <circle cx="292" cy="348" r="5" fill="#60A5FA"/><text x="308" y="355" fill="#E0EEFF" font-size="18">ACT</text>
+    <path d="M404 348H428M422 342L428 348L422 354" stroke="#64748B" stroke-width="2"/>
+    <rect x="444" y="324" width="140" height="48" rx="12" fill="#13283B" stroke="#29445A"/>
+    <circle cx="468" cy="348" r="5" fill="#5EEAD4"/><text x="484" y="355" fill="#DDFBF6" font-size="18">VERIFY</text>
+    <rect x="802" y="98" width="152" height="112" rx="16" fill="#111F33" stroke="#536B88" stroke-width="2"/>
+    <path d="M828 129H928V174H828Z M856 189H900" stroke="#60A5FA" stroke-width="3" stroke-linejoin="round"/>
+    <text x="878" y="239" text-anchor="middle" fill="#B5C6DB" font-size="17">Windows</text>
+    <rect x="1060" y="76" width="112" height="214" rx="24" fill="#111F33" stroke="#536B88" stroke-width="2"/>
+    <rect x="1072" y="94" width="88" height="176" rx="12" fill="#192D43"/>
+    <path d="M1102 106H1130" stroke="#536B88" stroke-width="4" stroke-linecap="round"/>
+    <rect x="1085" y="136" width="62" height="33" rx="7" fill="#254968" stroke="#60A5FA"/>
+    <rect x="1085" y="180" width="26" height="26" rx="6" fill="#24504E" stroke="#5EEAD4"/>
+    <rect x="1121" y="180" width="26" height="26" rx="6" fill="#254968" stroke="#60A5FA"/>
+    <circle cx="1123" cy="220" r="7" fill="#D2DCE8"/>
+    <text x="1116" y="318" text-anchor="middle" fill="#B5C6DB" font-size="17">iPhone</text>
+    <path d="M1060 151H954M962 145L954 151L962 157" stroke="#60A5FA" stroke-width="2"/>
+    <text x="1006" y="137" text-anchor="middle" fill="#93C5FD" font-size="14">USB</text>
+    <rect x="842" y="289" width="72" height="60" rx="10" fill="#152F3B" stroke="#5EEAD4" stroke-width="2"/>
+    <path d="M854 306H902M854 316H886M854 326H894" stroke="#5EEAD4" stroke-opacity=".65" stroke-width="2"/>
+    <path d="M878 251V289M914 319H993Q1010 319 1010 302V249Q1010 232 1027 232H1060" stroke="#5EEAD4" stroke-width="2" stroke-dasharray="5 5"/>
+    <text x="878" y="377" text-anchor="middle" fill="#B5C6DB" font-size="17">ESP32</text>
+    <text x="1008" y="354" text-anchor="middle" fill="#99E7DB" font-size="14">BLE HID</text>
+  </g>
+  <rect x="54" y="414" width="1172" height="3" rx="1.5" fill="url(#accent)"/>
+</svg>

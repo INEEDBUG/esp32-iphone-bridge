@@ -120,6 +120,42 @@ class PublicSnapshotSyncTests(unittest.TestCase):
         self.assertEqual(remote_head, result["commit"])
         self.assertEqual(self._git("rev-parse", "HEAD^", cwd=self.mirror).strip(), self.initial_head)
 
+    def _bilingual_manifest(self):
+        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+        zh = manifest["files"]["docs/PUBLIC_README.zh-CN.md"]
+        english = b"# English overview\n"
+        (self.staging / "README.md").write_bytes(english)
+        zh["outputs"] = [row for row in zh["outputs"] if row["path"] == "README.zh-CN.md"]
+        digest = hashlib.sha256(english).hexdigest()
+        manifest["files"]["docs/PUBLIC_README.md"] = {
+            "source_sha256": digest, "outputs": [{"path": "README.md", "sha256": digest}]}
+        return manifest
+
+    def test_distinct_language_mapping_and_named_banner_are_accepted(self):
+        manifest = self._bilingual_manifest()
+        name = "docs/assets/phonelab-banner.svg"
+        banner = b'<svg xmlns="http://www.w3.org/2000/svg"/>\n'
+        path = self.staging / name
+        path.parent.mkdir(parents=True)
+        path.write_bytes(banner)
+        digest = hashlib.sha256(banner).hexdigest()
+        manifest["files"][name] = {"source_sha256": digest, "outputs": [{"path": name, "sha256": digest}]}
+        self.manifest.write_text(json.dumps(manifest), encoding="utf-8")
+        self.assertEqual(self._run(apply=True)["state"], "COMMITTED_LOCAL")
+        self.assertNotEqual((self.mirror / "README.md").read_bytes(), (self.mirror / "README.zh-CN.md").read_bytes())
+
+    def test_bilingual_mapping_cannot_alias_or_omit_language_output(self):
+        manifest = self._bilingual_manifest()
+        manifest["files"]["docs/PUBLIC_README.md"]["outputs"][0]["path"] = "README.zh-CN.md"
+        self.manifest.write_text(json.dumps(manifest), encoding="utf-8")
+        with self.assertRaises(PublicSyncError):
+            self._run()
+        manifest = self._bilingual_manifest()
+        manifest["files"]["docs/PUBLIC_README.zh-CN.md"]["outputs"] = []
+        self.manifest.write_text(json.dumps(manifest), encoding="utf-8")
+        with self.assertRaises(PublicSyncError):
+            self._run()
+
     def test_hash_mismatch_unapproved_review_wrong_remote_and_dirty_tree_block(self):
         path = self.staging / "phonelab" / "app.py"
         path.write_text("tampered\n", encoding="utf-8")

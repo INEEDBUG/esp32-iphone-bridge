@@ -18,9 +18,11 @@ ROOT_FILES = {
     ".gitignore", "Start-PhoneLab.ps1", "LICENSE", "THIRD_PARTY_NOTICES.md",
 }
 PUBLIC_DOCS = {
-    "docs/PUBLIC_README.zh-CN.md": ("README.zh-CN.md", "README.md"),
+    "docs/PUBLIC_README.md": ("README.md",),
+    "docs/PUBLIC_README.zh-CN.md": ("README.zh-CN.md",),
     "docs/PUBLIC_PROGRESS.md": ("docs/PROGRESS.md",),
 }
+PUBLIC_ASSETS = {"docs/assets/phonelab-banner.svg"}
 SOURCE_DIRS = {"phonelab", "firmware", "upstream", "scripts", "tests"}
 EXCLUDED_DIRS = {
     ".git", ".venv", "venv", "__pycache__", ".pytest_cache", "node_modules",
@@ -89,7 +91,7 @@ def _excluded_path(path: PurePosixPath) -> str | None:
     return None
 
 
-def _target_paths(path: str) -> tuple[str, ...] | None:
+def _target_paths(path: str, *, legacy_readme: bool = False) -> tuple[str, ...] | None:
     parsed = validate_repo_path(path)
     top = parsed.parts[0]
     if len(parsed.parts) == 1:
@@ -98,6 +100,10 @@ def _target_paths(path: str) -> tuple[str, ...] | None:
         return None
     if top in SOURCE_DIRS:
         return (path,)
+    if path in PUBLIC_ASSETS:
+        return (path,)
+    if legacy_readme and path == "docs/PUBLIC_README.zh-CN.md":
+        return ("README.zh-CN.md", "README.md")
     return PUBLIC_DOCS.get(path)
 
 
@@ -167,6 +173,8 @@ def prepare_public_snapshot(source: Path | str, destination: Path | str,
     _validate_locations(source, destination, manifest)
     commit = _resolve_commit(source, ref)
     tree = _tree(source, commit)
+    # Preserve reproducible exports of older commits with a single public README.
+    legacy_readme = not any(row[3] == "docs/PUBLIC_README.md" for row in tree)
     files: dict[str, dict] = {}
     exclusions: list[dict[str, str]] = []
     targets_seen: set[str] = set()
@@ -177,7 +185,7 @@ def prepare_public_snapshot(source: Path | str, destination: Path | str,
         if excluded:
             exclusions.append({"path": source_path, "reason": excluded})
             continue
-        targets = _target_paths(source_path)
+        targets = _target_paths(source_path, legacy_readme=legacy_readme)
         if targets is None:
             exclusions.append({"path": source_path, "reason": "outside_public_allowlist"})
             continue
@@ -187,7 +195,7 @@ def prepare_public_snapshot(source: Path | str, destination: Path | str,
         _validate_text_blob(data)
         source_hash = hashlib.sha256(data).hexdigest()
         output_mode = mode
-        if source_path == "docs/PUBLIC_README.zh-CN.md":
+        if source_path in {"docs/PUBLIC_README.md", "docs/PUBLIC_README.zh-CN.md"}:
             data = _sanitize_public_readme(data)
         for target in targets:
             target_path = validate_repo_path(target)
@@ -198,6 +206,8 @@ def prepare_public_snapshot(source: Path | str, destination: Path | str,
         pending.append((source_path, targets, data, source_hash, output_mode))
 
     required_sources = {"LICENSE", "THIRD_PARTY_NOTICES.md", *PUBLIC_DOCS.keys()}
+    if legacy_readme:
+        required_sources.remove("docs/PUBLIC_README.md")
     pending_sources = {item[0] for item in pending}
     if not required_sources.issubset(pending_sources):
         raise SnapshotError("required public license or public documentation is missing from the commit")

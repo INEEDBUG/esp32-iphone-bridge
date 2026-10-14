@@ -1,30 +1,48 @@
-# PhoneLab
+<p align="center">
+  <img src="docs/assets/phonelab-banner.svg" alt="PhoneLab — A local iPhone automation lab. Observe, act, verify." width="100%">
+</p>
 
-PhoneLab 是一个面向 Windows 的实验项目，用 USB 读取 iPhone 屏幕截图，并研究一个独立 ESP32 BLE HID 固件对合成测试页面的有限输入。它不提供通用手机自动化，也不判断设备当前是否已解锁。
+<p align="center">
+  <strong>English</strong> · <a href="README.zh-CN.md">简体中文</a><br>
+  <a href="#how-it-works">Architecture</a> · <a href="#what-works-today">Status</a> · <a href="#run-locally">Quick start</a> · <a href="docs/PROGRESS.md">Progress</a>
+</p>
 
-当前代码默认只启动本机服务，输入后端保持关闭；普通启动不会打开串口或发送键盘、鼠标报告。USB 截图需要通过明确的 `-CaptureUsb` 选项启动，只采集画面，不发送设备输入。实验 BLE 输入是独立、一次性且受限的功能，只有在显式调用相应实验工具时才会打开串口。
+PhoneLab is an experimental Windows lab for observing a real iPhone over USB and testing bounded ESP32 BLE keyboard/mouse input on a synthetic browser page. It connects **screen evidence, a constrained action, and an independently checked result**.
 
-项目仍处于实验阶段。当前公开进展只覆盖少量合成页面目标和受限输入检查；完整 25 个目标矩阵、不同设备/系统的兼容性和通用自动化能力均未完成。通用控制器在锁状态为 `UNKNOWN` 时拒绝输入。独立合成页实验需要现场解锁确认和持续有效的真实页面画面，仍不把锁状态标成 `UNLOCKED`。
+> **Experimental.** Real-device evidence comes from one iPhone 11 on iOS 17.5.1. General phone automation and broad compatibility are still open work.
 
-## 已验证边界
+## How it works
 
-当前开发记录来自 Windows 和一台 iPhone 11 / iOS 17.5.1 的受限测试；这不是广泛兼容性声明。固件曾用于实验，首次使用前必须单独核验并留存完整板载备份，并单独批准任何写入。备份恢复尚未通过真实恢复测试。普通构建脚本只编译，不上传、擦除或打开串口。
+| Observe | Act | Verify |
+| :--- | :--- | :--- |
+| Capture real USB screenshots; locate the live page, pointer and target in the image. | Send an explicitly requested, bounded BLE HID action through an ESP32. | Compare screenshots and browser-reported events; preserve uncertain outcomes. |
 
-输入只面向当前被绑定的合成 PhoneLab 页面。报告 `executed` 只表示固件/协议路径接受了请求，不证明 iOS 应用已按预期响应。每次实验都应查看前后截图及浏览器报告事件；事件记录不是硬件来源证明。历史小样本记录了三个不同测试目标的点击和一次小幅纵向滚动，但这不构成完整矩阵或稳定性证明。
+```mermaid
+flowchart LR
+    Phone["iPhone · synthetic Safari page"] -->|USB screenshots| Host["Windows · image guards"]
+    Host -->|Serial · bounded request| Board["ESP32-WROOM-32E · BLE HID"]
+    Board -->|BLE keyboard / mouse| Phone
+    Phone -.->|Browser events · assertions| Host
+```
 
-近期主机端图像校验通过精确灰色掩码与受限形态学处理区分指针和邻近文字，并用唯一的浅色按钮填充区域辅助解决共享边框歧义。归档的 Probe 12 几何构造通过，但因指针未对准而在最终对齐检查中被拒绝。两个失败试验分别因摘要遮挡、短边框线段过早丢弃而停止，未发送点击；修正后新一轮 Probe 12 点击已由独立事件和延迟 USB 截图核验，目标与总计数均从 0 变为 1。主机保持预期总数跨不可读区间连续，并在既有受限缺口补接后重新执行原线段长度要求。文本范围 API 目前只有主机测试，没有真实文本保护、CLI 文本操作或输入效果证明。完整页面矩阵、文本输入、拖动、稳定滚动和重连仍未验证。
+Ordinary startup serves the local interface with the input backend **off**. USB capture is opt-in. Separate one-shot experiments require fresh screen evidence, exclusive input ownership, session checks and shared cancellation. The generic controller refuses input when the OS lock state is `UNKNOWN`; the synthetic-page experiment does not relabel it as unlocked.
 
-图像/目标完整校验已去掉一次重复执行，仍在串口握手后、动作发出前强制执行；早期页面、会话和时效检查保留。新的单次滚动有最终检查、串口写入顺序及页面/真实截图位移的交叉证据；此前未知结果不据此改判，也没有重发。
+## What works today
 
-新批次有六次双向小幅滚动经图像和事件核验，第七次在发送前停止，未完成十次批次。新增显式 `image-page-scroll` 保留同一图像/会话保护，单次参数上限为16，旧 `image-scroll` 上限仍为3；当前+16样本仍仅移动3个CSS像素，未证明更大幅度或更快滚动。
+| Capability | Evidence / boundary |
+| :--- | :--- |
+| **USB observation** | Real 828 × 1792 screenshots on the lab phone. |
+| **Image-guided click** | Small target samples, checked against trusted browser events and delayed real screenshots. Full 25-target acceptance remains open. |
+| **Small vertical scroll** | A fresh 10-sample alternating batch passed: five in each direction, with matching image displacement and unchanged click counts. Broader scrolling remains unverified. |
+| **Recovery** | One host-shutdown / board-USB recovery followed by a verified click. Three-round reconnect acceptance remains open. |
+| **Host validation** | Automated guard, protocol, cancellation, export and vision tests. These do not establish device behavior. |
+| **Still in progress** | Real text entry, deletion, dragging, sustained input stability and cross-device support. |
 
-图像校验在一次本机测量中耗时约 1.688 秒；此结果取决于该图像和主机，不是性能保证。原有两秒画面时效限制不变。约 22 像素的指针圆盘假设可能未知，实测实验指针约为 38 像素；标签被遮挡、边框缺口无法由检测到的指针解释、或几何不明确时拒绝操作。
+The [progress log](docs/PROGRESS.md) retains failed and unknown trials alongside successful samples. A firmware `executed` acknowledgement is transport evidence; it does not prove the intended iOS effect. Browser events also do not independently prove their hardware source.
 
-连通区域遍历已改为保持八邻接的扫描线实现，颜色、形态学、几何、唯一性和时效门不变。穷举512个小掩码及固定种子随机/边界用例与独立旧算法统计一致，三个真实归档画面的新旧判定一致；一张有效图的完整校验约由1.66秒降至1.14秒，不能作为其他画面的性能保证。意外Windows关机后，经USB重连和完整只读核验，新一次Probe12点击由串口、页面事件及延迟真实截图证实计数0→1。恢复期间的发送前拒绝和未知小移动均保留，没有重发；这不是完整重连或稳定性验收。
+## Run locally
 
-## Windows 本机运行
-
-需要 Windows、Python 3.13、PowerShell 和项目锁定的 Python 依赖。Windows OCR 使用系统提供的 OCR API。建议把运行数据放在仓库之外，并在提交前检查本地配置与忽略规则。
+**Host:** Windows, Python 3.13 and PowerShell 7. Windows OCR uses the system API through Windows PowerShell 5. USB capture additionally needs Apple drivers, a valid trust relationship and a private, confirmed target binding. Current identity checks are specific to the frozen lab model/OS; this is not a turnkey setup for arbitrary phones.
 
 ```powershell
 py -3.13 -m venv .venv
@@ -33,42 +51,43 @@ $env:PHONELAB_DATA_ROOT = Join-Path $env:LOCALAPPDATA 'PhoneLab\data'
 pwsh -NoProfile -File .\Start-PhoneLab.ps1
 ```
 
-默认服务仅绑定本机回环地址。它不会自动启用 LAN 代理。若需只读 USB 截图，另行显式启动：
+The service binds to **loopback** by default; it does not enable the LAN proxy automatically. To explicitly request read-only USB capture:
 
 ```powershell
 pwsh -NoProfile -File .\Start-PhoneLab.ps1 -CaptureUsb
 ```
 
-可用 `PHONELAB_PWSH` 指定本机 PowerShell 路径。也可在被忽略的 `.phonelab-local.json` 中设置非秘密路径（`data_root`、`pwsh`、`python_source`）；环境变量优先于该文件。不要把本机路径配置、截图、日志、配对缓存、令牌、序列号或备份提交到 Git。
+Use `PHONELAB_PWSH` to select a local PowerShell executable. Non-secret paths can also go in the ignored `.phonelab-local.json` (`data_root`, `pwsh`, `python_source`); environment variables take precedence. Keep runtime data outside the repository.
 
-USB 采集还需要本机已有的 Apple 驱动、有效信任记录和经确认的私密目标绑定。代码目前固定核验实验机型与系统版本，缺少绑定时会拒绝采集；本仓库不包含可直接用于其他设备的身份或部署配置。Windows OCR 使用 Windows PowerShell 5 的系统 OCR API，PowerShell 7 仍用于其他脚本。
-
-正常退出服务或需要停止当前操作时，运行：
+**Request a stop:**
 
 ```powershell
 .\.venv\Scripts\python.exe -m phonelab stop
 ```
 
-该命令请求项目运行时停止，并非对手机端释放状态的独立证明。遇到不确定的输入结果时，不要自动重试；先关闭当前实验并重新观察。
+This requests a runtime stop; it is not independent confirmation that the phone released every input. An uncertain action stops the trial and is never automatically replayed.
 
-## 固件构建
-
-WROOM-32 的实验目标使用 BLE HID over GATT 与本机串口 JSON 行协议，不启动 Wi-Fi 或 TCP。S3 上游固件保存在独立目录，两个固件目标不能混为一谈。
+## Build & test
 
 ```powershell
+# Build only — no upload, erase or serial connection
 pwsh -NoProfile -File .\scripts\Build-Firmware.ps1
-```
 
-脚本只做受版本和源文件摘要约束的编译。刷写、擦除及恢复是不同的高风险操作，不是安装或构建步骤。不要在没有可核验的完整板备份和针对本次写入的明确授权时执行。
-
-## 测试与许可
-
-运行项目测试：
-
-```powershell
+# Host checks — no real-device acceptance implied
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 
-项目自有代码采用 GPL-3.0-or-later，见 [`LICENSE`](LICENSE) 与 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。仓库保留的 MIT 组件继续适用各自许可；Python 与固件工具依赖也有各自条件。不要将整个仓库描述成 MIT 或假设依赖许可相同。
+The WROOM-32 experimental firmware uses BLE HID over GATT and local serial JSON lines. It starts no Wi-Fi or TCP service. The retained S3 upstream target is separate. Firmware tooling is pinned by version and source digest.
 
-实测范围和剩余工作记录在 [进展记录](docs/PROGRESS.md)。
+## Lab boundaries
+
+- **Preserve first.** Obtain and verify a complete board backup before separately authorizing any write. Actual backup restoration is still **untested**.
+- **Frozen phone.** This lab preserves iOS 17.5.1; the workflow does not require a phone update, restore or jailbreak.
+- **Fail closed.** Missing targets, stale frames, ambiguous geometry, changed sessions and cancellation stop the affected action. No automatic replay of uncertain input.
+- **Private evidence stays local.** Screenshots, pairing records, tokens, identifiers, firmware dumps, backups and machine configuration are excluded from this public snapshot.
+
+## License & attribution
+
+Project-authored code is **GPL-3.0-or-later**. Retained MIT components and other dependencies keep their own terms. See [LICENSE](LICENSE) and [third-party notices](THIRD_PARTY_NOTICES.md).
+
+For the current acceptance gaps and reproducible bounded experiment, see [Progress](docs/PROGRESS.md).

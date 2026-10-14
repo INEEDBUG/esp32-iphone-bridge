@@ -86,6 +86,23 @@ class PublicSnapshotTests(unittest.TestCase):
             prepare_public_snapshot(self.source, self.destination, self.ref, self.manifest)
         self.assertEqual(sentinel.read_text(encoding="utf-8"), "leave intact")
 
+    def test_distinct_languages_and_only_named_banner_are_exported(self):
+        self._write("docs/PUBLIC_README.md", b"# English\n[License](../LICENSE)\n")
+        banner = b'<svg xmlns="http://www.w3.org/2000/svg"><title>PhoneLab</title></svg>\n'
+        self._write("docs/assets/phonelab-banner.svg", banner)
+        self._write("docs/assets/private-diagram.svg", b"not approved for export\n")
+        self._git("add", "--all")
+        self._git("commit", "-qm", "bilingual public documentation")
+        ref = self._git("rev-parse", "HEAD").strip()
+        prepare_public_snapshot(self.source, self.destination, ref, self.manifest)
+        self.assertEqual((self.destination / "README.md").read_bytes(), b"# English\n[License](LICENSE)\n")
+        self.assertIn(b"# Public", (self.destination / "README.zh-CN.md").read_bytes())
+        self.assertEqual((self.destination / "docs/assets/phonelab-banner.svg").read_bytes(), banner)
+        self.assertFalse((self.destination / "docs/assets/private-diagram.svg").exists())
+        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+        self.assertEqual([x["path"] for x in manifest["files"]["docs/PUBLIC_README.md"]["outputs"]], ["README.md"])
+        self.assertEqual([x["path"] for x in manifest["files"]["docs/PUBLIC_README.zh-CN.md"]["outputs"]], ["README.zh-CN.md"])
+
     def test_invalid_ref_and_manifest_inside_destination_are_refused(self):
         with self.assertRaises(SnapshotError):
             prepare_public_snapshot(self.source, self.destination, "missing-ref", self.manifest)

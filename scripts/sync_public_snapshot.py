@@ -100,13 +100,17 @@ def _manifest_files(manifest: dict) -> dict[str, str]:
             (source_path in ROOT_SOURCE_FILES or
              (source_name.startswith("requirements") and source_name.endswith(".txt")))
         ) or source_top in PUBLIC_DIRS or source_path in {
-            "docs/PUBLIC_README.zh-CN.md", "docs/PUBLIC_PROGRESS.md"}
+            "docs/PUBLIC_README.md", "docs/PUBLIC_README.zh-CN.md", "docs/PUBLIC_PROGRESS.md",
+            "docs/assets/phonelab-banner.svg"}
         if (not source_allowed or any(part in PRIVATE_OR_GENERATED_PARTS for part in source_parts) or
                 source_name == ".env" or source_name.startswith(".env.") or
                 source_name.endswith(".local.json") or source_rel.suffix.casefold() in PRIVATE_OR_BINARY_SUFFIXES):
             raise PublicSyncError("manifest contains a path outside the public snapshot policy")
-        if source_path == "docs/PUBLIC_README.zh-CN.md":
-            required_outputs = {"README.zh-CN.md", "README.md"}
+        if source_path == "docs/PUBLIC_README.md":
+            required_outputs = {"README.md"}
+        elif source_path == "docs/PUBLIC_README.zh-CN.md":
+            required_outputs = ({"README.zh-CN.md"} if "docs/PUBLIC_README.md" in rows
+                                else {"README.zh-CN.md", "README.md"})
         elif source_path == "docs/PUBLIC_PROGRESS.md":
             required_outputs = {"docs/PROGRESS.md"}
         else:
