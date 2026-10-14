@@ -10,7 +10,10 @@
     * { box-sizing: border-box; }
     body { margin: 0 auto; max-width: 980px; padding: 18px; }
     header, section { background: white; border: 1px solid #d8e0ea; border-radius: 14px; padding: 16px; margin: 12px 0; }
-    h1 { font-size: 1.45rem; margin: 0 0 6px; }
+    h1 { font-size: 1.1rem; margin: 0 0 6px; }
+    header { padding: 10px 16px; }
+    header p { margin: 6px 0; }
+    header .muted { font-size: .8rem; }
     h2 { font-size: 1.1rem; margin: 0 0 12px; }
     .muted { color: #536176; }
     .badge { display: inline-block; border-radius: 99px; background: #e7f2ff; padding: 4px 10px; font: 700 .8rem ui-monospace, monospace; }
@@ -18,10 +21,13 @@
     .probe { min-height: 48px; border: 1px solid #285ec8; border-radius: 10px; background: #edf4ff; color: #123b84; font-weight: 700; touch-action: manipulation; }
     .probe:active { background: #cfe0ff; transform: scale(.97); }
     label { display: block; font-weight: 650; margin-bottom: 7px; }
-    input { width: 100%; min-height: 48px; border: 1px solid #9aa9bb; border-radius: 9px; padding: 10px 12px; font: inherit; }
-    #drag-source, #drop-target { border: 2px dashed #7588a2; border-radius: 10px; padding: 18px; margin: 12px 0; text-align: center; }
-    #drag-source { display: inline-block; background: #fff2d4; touch-action: none; }
-    #drop-target { min-height: 70px; background: #f2f8ed; }
+    input { width: 100%; height: 54px; border: 2px solid #64748b; border-radius: 9px; padding: 10px 12px; font: 20px/30px "Courier New", monospace; background: #e8fff4; color: #172033; caret-color: #e11d48; }
+    input:focus { outline: none; border-color: #008577; }
+    .drag-row { display: flex; align-items: center; gap: 20px; }
+    #drag-source, #drop-target { border: 2px solid; border-radius: 10px; height: 64px; padding: 18px 12px; text-align: center; }
+    #drag-source { width: 90px; flex: none; background: #fff2d4; border-color: #b46414; touch-action: none; user-select: none; }
+    #drop-target { flex: 1; background: #f2f8ed; border-color: #46823c; }
+    #native-scroll { position: fixed; left: 10px; bottom: calc(env(safe-area-inset-bottom) + 68px); width: 120px; height: 64px; border: 2px solid #41556e; border-radius: 10px; background: #ecf2fa; display: grid; place-items: center; font-size: 14px; z-index: 1; }
     #log { max-height: 260px; overflow: auto; background: #101827; color: #d5e3fa; border-radius: 9px; padding: 10px; font: 12px/1.4 ui-monospace, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
     .spacer { min-height: 65vh; display: grid; place-items: center; border: 1px dashed #a6b2c1; border-radius: 10px; margin: 16px 0; color: #596a82; }
     .actions { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -34,10 +40,24 @@
 <body>
   <header>
     <h1>PhoneLab browser test surface</h1>
-    <div class="muted">Synthetic browser interaction only. These observations do not prove phone hardware control.</div>
+    <div class="muted">Synthetic tests only. No accounts or personal data.</div>
     <p>Test <b id="test-id"></b> · seed <b id="seed"></b> · fresh marker <span class="badge" id="nonce"></span></p>
     <p id="delivery" class="muted">Waiting for browser events.</p>
   </header>
+
+  <section>
+    <label for="test-text">Text test · fixed synthetic phrases only</label>
+    <input id="test-text" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Synthetic test text">
+  </section>
+
+  <section>
+    <h2>Pointer drag test</h2>
+    <div class="drag-row">
+      <div id="drag-source" draggable="false">DRAG</div>
+      <div id="drop-target">DROP</div>
+    </div>
+    <p id="drop-state" class="muted">Completed drags: 0</p>
+  </section>
 
   <section>
     <h2>Position-varied button probes</h2>
@@ -60,23 +80,12 @@
     </div>
   </section>
 
-  <section>
-    <h2>Text entry</h2>
-    <label for="test-text">Synthetic test text (do not enter passwords or personal data)</label>
-    <input id="test-text" type="text" autocomplete="off" placeholder="Type a harmless test phrase">
-  </section>
-
-  <section>
-    <h2>Drag and drop</h2>
-    <div id="drag-source" draggable="true">Drag this test item</div>
-    <div id="drop-target">Drop target: <span id="drop-state">empty</span></div>
-  </section>
-
   <div class="spacer" id="scroll-marker-one">Scroll marker A · scroll down to marker B</div>
   <div class="spacer" id="scroll-marker-two">Scroll marker B · continue to the bottom marker</div>
   <div class="spacer" id="scroll-marker-three">Bottom scroll marker</div>
 
   <canvas id="visual-marker" width="40" height="40" aria-hidden="true"></canvas>
+  <div id="native-scroll">Scroll here</div>
 
   <section>
     <h2>Observed event log</h2>
@@ -187,6 +196,9 @@
       const delivery = document.getElementById("delivery");
       let seq = 0;
       let dragState = "not-started";
+      let dragPointer = null;
+      let dragMoved = false;
+      let completedDrags = 0;
       let sendChain = Promise.resolve();
       const entries = [];
       function emit(event) {
@@ -228,6 +240,15 @@
         }
         if (event.type === "drop") data.dragState = dragState;
         return data;
+      }
+      function reportField(fromTrustedInput) {
+        const field=document.getElementById("test-text");
+        const value=field.value;
+        const prefix=syntheticTextCorpus.some(phrase=>phrase.startsWith(value));
+        emit({type:"field_state",isTrusted:false,text:prefix?value:null,textLength:Math.min(value.length,2000),
+          syntheticTextPrefix:prefix,focused:document.activeElement===field,
+          caretAtEnd:field.selectionStart===value.length && field.selectionEnd===value.length,
+          fromTrustedInput});
       }
       let lastPageGeometryAt = -Infinity;
       let pendingPageGeometryTimer = null;
@@ -317,8 +338,10 @@
             document.getElementById("drop-state").textContent = "received drop event";
           }
           emit(describe(event));
+          if (name === "input" && event.isTrusted && event.target.id === "test-text") reportField(true);
         }, true);
       }
+      document.getElementById("test-text").addEventListener("focus",()=>reportField(false));
       let lastScrollAt = -Infinity;
       let pendingScrollEvent = null;
       let pendingScrollTimer = null;
@@ -349,6 +372,35 @@
       }, { passive: true });
       document.getElementById("drop-target").addEventListener("dragover", event => event.preventDefault());
       document.getElementById("drop-target").addEventListener("drop", event => event.preventDefault());
+      const dragSource = document.getElementById("drag-source");
+      dragSource.addEventListener("pointerdown", event => {
+        if (!event.isTrusted || event.button !== 0) return;
+        dragPointer = event.pointerId;
+        dragMoved = false;
+        dragState = "pressed";
+        dragSource.setPointerCapture(event.pointerId);
+      });
+      dragSource.addEventListener("pointermove", event => {
+        if (!event.isTrusted || event.pointerId !== dragPointer || !(event.buttons & 1)) return;
+        dragMoved = true;
+        dragState = "moving";
+      });
+      dragSource.addEventListener("pointerup", event => {
+        if (!event.isTrusted || event.pointerId !== dragPointer) return;
+        const rect = document.getElementById("drop-target").getBoundingClientRect();
+        const completed = dragMoved && event.clientX > rect.left && event.clientX < rect.right &&
+          event.clientY > rect.top && event.clientY < rect.bottom;
+        dragState = completed ? "dropped" : "released-outside";
+        if (completed) completedDrags++;
+        document.getElementById("drop-state").textContent = `Completed drags: ${completedDrags}`;
+        dragPointer = null;
+        // Derived assertion; the original trusted pointer events are logged separately.
+        emit({type: "drag_result", isTrusted: false, completed, dropCount: completedDrags,
+          trustedPointerSequence: true, dragState});
+      });
+      dragSource.addEventListener("pointercancel", () => {
+        dragPointer = null; dragMoved = false; dragState = "cancelled";
+      });
       document.getElementById("save-final").addEventListener("click", event => {
         const value = document.getElementById("test-text").value;
         const syntheticTextMatch = syntheticTextCorpus.includes(value);

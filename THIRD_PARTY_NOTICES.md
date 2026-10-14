@@ -30,4 +30,6 @@ Other build components are not bundled with this project. EspBle 1.3.0 is an MIT
 
 ## Not distributed
 
+Optional local field OCR pins [Tesseract.js and its core 7.0.0](https://github.com/naptha/tesseract.js/tree/v7.0.0), Apache-2.0, through `scripts/local-ocr/package-lock.json`. The separately downloaded [tessdata_fast English data](https://github.com/tesseract-ocr/tessdata_fast/tree/87416418657359cb625c412a48b6e1d6d41c29bd) is Apache-2.0. Transitive npm license metadata for the lock is MIT, Apache-2.0 or BSD-2-Clause; each installed package retains its own license. Packages, WASM binaries and language data are not bundled in the public snapshot. Setup runs with lifecycle scripts disabled and does not install Windows language packs. See [local OCR setup](scripts/local-ocr/README.md).
+
 The project does not include its virtual environment, generated firmware or other build binaries, Apple Developer Disk Images, Apple certificates, device pairing records, private captures, board backups, or deployment receipts. Obtain third-party software from its upstream source and follow its license. Do not publish private runtime data or device-specific files.

@@ -36,6 +36,10 @@ _EVENT_FIELDS = {
     "beforeinput": _EVENT_COMMON_FIELDS | {"textLength", "syntheticTextMatch"},
     "input": _EVENT_COMMON_FIELDS | {"textLength", "syntheticTextMatch"},
     "drop": _EVENT_COMMON_FIELDS | {"dragState"},
+    "drag_result": frozenset({"type", "isTrusted", "completed", "dropCount",
+                              "trustedPointerSequence", "dragState"}),
+    "field_state": frozenset({"type", "isTrusted", "text", "textLength", "syntheticTextPrefix",
+                               "focused", "caretAtEnd", "fromTrustedInput"}),
     "scroll": _EVENT_COMMON_FIELDS | {"scrollX", "scrollY"},
     "page_geometry": _EVENT_COMMON_FIELDS | {
         "innerWidth", "innerHeight", "visualWidth", "visualHeight",
@@ -50,7 +54,7 @@ _EVENT_TARGETS = frozenset({
     "window", "document", "element", "html", "body", "header", "h1", "div", "b", "p",
     "section", "h2", "button", "input", "label", "span", "pre", "test-text", "drag-source",
     "drop-target", "drop-state", "save-final", "probe-grid", "probe-summary", "test-id", "seed", "nonce", "delivery",
-    "log", "scroll-marker-one", "scroll-marker-two", "scroll-marker-three",
+    "log", "scroll-marker-one", "scroll-marker-two", "scroll-marker-three", "native-scroll",
     *(f"{number:02d}" for number in range(1, 26)),
 })
 SAFE_CONTROL_OPS = {
@@ -124,6 +128,18 @@ def _valid_browser_event(event: dict) -> bool:
     fields = _EVENT_FIELDS.get(event_type) if isinstance(event_type, str) else None
     if fields is None or set(event) != fields or type(event.get("isTrusted")) is not bool:
         return False
+    if event_type == "field_state":
+        text=event.get('text');length=event.get('textLength');prefix=event.get('syntheticTextPrefix')
+        if (event['isTrusted'] is not False or type(length) is not int or not 0<=length<=2000
+                or any(type(event.get(name)) is not bool for name in ('syntheticTextPrefix','focused','caretAtEnd','fromTrustedInput'))):
+            return False
+        return ((text is None and prefix is False) or (isinstance(text,str) and prefix is True
+                and length==len(text) and any(value.startswith(text) for value in SYNTHETIC_TEXT_CORPUS)))
+    if event_type == "drag_result":
+        return (event['isTrusted'] is False and type(event.get('completed')) is bool
+                and type(event.get('dropCount')) is int and 0 <= event['dropCount'] <= 999999
+                and event.get('trustedPointerSequence') is True
+                and event.get('dragState') == ('dropped' if event['completed'] else 'released-outside'))
     if event_type != "final_state":
         target = event.get("target")
         if not isinstance(target, str) or target not in _EVENT_TARGETS:
@@ -178,7 +194,7 @@ def _valid_browser_event(event: dict) -> bool:
         if not all(_finite_number(event.get(name), -1_000_000, 1_000_000) for name in ("scrollX", "scrollY")):
             return False
         drag_state = event.get("dragState")
-        if not isinstance(drag_state, str) or drag_state not in {"not-started", "started", "dropped"}:
+        if not isinstance(drag_state, str) or drag_state not in {"not-started", "started", "pressed", "moving", "dropped", "released-outside", "cancelled"}:
             return False
     return True
 

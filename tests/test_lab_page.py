@@ -7,6 +7,17 @@ import subprocess
 import pytest
 
 
+def test_interaction_surfaces_are_reachable_and_native_caret_is_visible():
+    html = (Path(__file__).resolve().parents[1] / 'phonelab/static/lab.html').read_text(encoding='utf-8')
+    assert html.index('id="test-text"') < html.index('id="probe-grid"')
+    assert html.index('id="drag-source"') < html.index('id="probe-grid"')
+    assert 'caret-color: #e11d48' in html
+    assert 'id="native-scroll"' in html
+    assert 'draggable="false"' in html
+    assert 'event.isTrusted' in html
+    assert '.value =' not in html and '.value=' not in html
+
+
 def test_visible_probe_counts_require_trusted_events_and_remain_per_target():
     node = shutil.which('node')
     if node is None:
