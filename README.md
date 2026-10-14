@@ -52,6 +52,11 @@ $env:PHONELAB_DATA_ROOT = Join-Path $env:LOCALAPPDATA 'PhoneLab\data'
 pwsh -NoProfile -File .\Start-PhoneLab.ps1
 ```
 
+For faster CPU pointer-mask checks, optionally install the pinned headless
+accelerator with `python -m pip install -r requirements-vision-fast.txt` inside
+the virtual environment. It preserves the Pillow reference operations and
+does not add a GUI or change the input guards.
+
 The service binds to **loopback** by default; it does not enable the LAN proxy automatically. To explicitly request read-only USB capture:
 
 ```powershell

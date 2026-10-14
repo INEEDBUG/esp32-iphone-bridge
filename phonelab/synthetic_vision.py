@@ -9,6 +9,13 @@ import math
 
 from PIL import Image, ImageChops, ImageCms, ImageFilter, ImageMath
 
+try:
+    import cv2
+    import numpy as np
+except ImportError:
+    cv2 = None
+    np = None
+
 from .visual_marker import VisualMarker
 
 
@@ -126,6 +133,31 @@ def _neutral_masks(image):
     return masks
 
 
+def _pillow_cleanup_pointer_mask(mask):
+    """Reference morphology used when the optional accelerator is unavailable."""
+    result = mask.filter(ImageFilter.MaxFilter(5)).filter(ImageFilter.MinFilter(5))
+    for _ in range(5):
+        result = result.filter(ImageFilter.MinFilter(3))
+    for _ in range(5):
+        result = result.filter(ImageFilter.MaxFilter(3))
+    return result
+
+
+def _cleanup_pointer_mask(mask):
+    """Apply the exact pointer-mask close/open morphology with optional OpenCV."""
+    if cv2 is None or np is None:
+        return _pillow_cleanup_pointer_mask(mask)
+
+    pixels = np.asarray(mask, dtype=np.uint8)
+    border = cv2.BORDER_REPLICATE
+    close_kernel = np.ones((5, 5), dtype=np.uint8)
+    opened_kernel = np.ones((3, 3), dtype=np.uint8)
+    closed = cv2.morphologyEx(pixels, cv2.MORPH_CLOSE, close_kernel, borderType=border)
+    cleaned = cv2.morphologyEx(closed, cv2.MORPH_OPEN, opened_kernel,
+                               iterations=5, borderType=border)
+    return Image.fromarray(cleaned, mode="L")
+
+
 def detect_pointer(png: bytes, *, verified_marker: VisualMarker) -> PointerCandidate | None:
     """Return one compact neutral circular candidate, else UNKNOWN (None).
 
@@ -160,13 +192,7 @@ def detect_pointer(png: bytes, *, verified_marker: VisualMarker) -> PointerCandi
         # First bridge 1-2px blue seams through a dot, then remove thin gray
         # paragraph strokes touching it. Opening first can erase one side of a
         # split dot and shift its center. Geometry/uniqueness remain unchanged.
-        mask = mask.filter(ImageFilter.MaxFilter(5)).filter(ImageFilter.MinFilter(5))
-        # Five square 3px erosions/dilations equal one square 11px operation,
-        # while Pillow's smaller rank filters finish well within frame expiry.
-        for _ in range(5):
-            mask = mask.filter(ImageFilter.MinFilter(3))
-        for _ in range(5):
-            mask = mask.filter(ImageFilter.MaxFilter(3))
+        mask = _cleanup_pointer_mask(mask)
         for area, min_x, min_y, max_x, max_y, touches_edge in _connected_components(
                 mask.tobytes(), width, height):
             box_w, box_h = max_x - min_x + 1, max_y - min_y + 1

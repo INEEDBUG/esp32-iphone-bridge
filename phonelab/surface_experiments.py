@@ -10,8 +10,8 @@ from .live_observation import LiveObservationClient,BASE_URL
 from .page_experiments import (_load_control_token,_private_root,_validate_snapshot,
     _new_evidence_dir,_save_snapshot,_safe_events,ROOT,TEST_ID,SEED)
 from .page_scope import (PageImageLocatedClickExperiment,PageImageLocatedTextExperiment,
-    windows_input_lease,_synthetic_text_prefix,_SYNTHETIC_TEXT_PHRASES)
-from .image_text_guard import ImageTextFieldGuard
+    PageScopeError,windows_input_lease,_synthetic_text_prefix,_SYNTHETIC_TEXT_PHRASES)
+from .image_text_guard import ImageTextFieldGuard,select_visible_caret_snapshot
 from .surface_sequences import SurfacePointerGuard,SurfaceScrollSequence,SurfaceDragGesture
 from .stop_signal import StopStore
 
@@ -27,12 +27,18 @@ def validate_surface_request(operation,args):
     return dict(args)
 
 
-def run_surface_experiment(operation,arguments,*,data_root=deploy.DATA,private_root=None,stop_token=None):
+def run_surface_experiment(operation,arguments,*,data_root=deploy.DATA,private_root=None,stop_token=None,text_reference=None):
     arguments=validate_surface_request(operation,arguments)
+    if text_reference is not None:
+        from .prefix_image_reference import VerifiedPrefixImage
+        if (not isinstance(text_reference,VerifiedPrefixImage) or operation!='backspace'
+                or not text_reference.full_text.startswith(arguments['expected_text'])):
+            raise ValueError('backspace requires a verified prefix reference for this phrase')
     data=Path(data_root);private=_private_root(Path(private_root) if private_root else data/'private')
     token=stop_token if stop_token is not None else StopStore(private).capture()
     evidence=None;observer=None;scope=None;run_id=None;target=None;nonce=None
     input_writes=[];observed=[]
+    select_text_candidate=False;text_guard=None;selection_request_deadline=None
     started=time.monotonic()
     def trace(phase,**fields):
         if evidence is not None:
@@ -53,13 +59,28 @@ def run_surface_experiment(operation,arguments,*,data_root=deploy.DATA,private_r
         baseline=_safe_events(observer,run_id)
         (evidence/'baseline-events.json').write_text(json.dumps(baseline),encoding='utf-8')
         inner=observer
+        def check_selection_cancelled():
+            if token.is_set():raise PageScopeError('stopped generation during caret selection')
         class Recording:
             def events(self,*args):return inner.events(*args)
-            def snapshot(self):
+            def _read_snapshot(self):
+                if token.is_set():raise PageScopeError('stopped generation during image selection')
                 value=inner.snapshot()
                 _validate_snapshot(value,target=target,nonce=nonce,clock=time.monotonic)
+                run=inner.events(run_id).get('run')
+                if not isinstance(run,dict) or any(
+                        run.get(key)!=expected for key,expected in
+                        (('run_id',run_id),('nonce',nonce),('test_id',TEST_ID))):
+                    raise PageScopeError('page session changed during image selection')
                 observed.append(value)
                 return value
+            def snapshot(self):
+                if select_text_candidate:
+                    return select_visible_caret_snapshot(self._read_snapshot,text_guard,
+                        clock=time.monotonic,sleep=time.sleep,
+                        check_cancelled=check_selection_cancelled,
+                        request_deadline=selection_request_deadline)
+                return self._read_snapshot()
         def open_backend():
             backend=runtime.open_approved(data=data,private=private,image_root=ROOT,
                 epoch_reader=runtime.read_windows_connection_epoch,stop_token=token)
@@ -74,10 +95,17 @@ def run_surface_experiment(operation,arguments,*,data_root=deploy.DATA,private_r
             backend.wire.write=write
             original_execute=backend.execute
             def execute(request):
+                nonlocal select_text_candidate,selection_request_deadline
                 check=request['_pre_input_guard']
                 def guarded():
+                    nonlocal select_text_candidate,selection_request_deadline
                     trace('guard_begin',op=request['op'])
-                    result=check();trace('guard_pass',op=request['op']);return result
+                    select_text_candidate=request['op'] in ('type','key') and text_guard is not None
+                    selection_request_deadline=request['deadline']
+                    try:
+                        result=check();trace('guard_pass',op=request['op']);return result
+                    finally:
+                        select_text_candidate=False;selection_request_deadline=None
                 result=original_execute({**request,'_pre_input_guard':guarded})
                 trace('ack',op=request['op'],state=result.get('state'),
                       mouse_ready=result.get('mouse_ready'),ble_connected=result.get('ble_connected'))
@@ -92,7 +120,9 @@ def run_surface_experiment(operation,arguments,*,data_root=deploy.DATA,private_r
             result=scope.click()
         elif operation in ('type','backspace'):
             expected='' if operation=='type' else arguments['expected_text']
-            scope=PageImageLocatedTextExperiment(recording,image_guard=ImageTextFieldGuard(nonce,expected),expected_text=expected,**common)
+            text_guard=ImageTextFieldGuard(nonce,expected,
+                ocr_reader=text_reference.ocr_reader if text_reference is not None else None)
+            scope=PageImageLocatedTextExperiment(recording,image_guard=text_guard,expected_text=expected,**common)
             result=scope.type_phrase(arguments['text']) if operation=='type' else scope.backspace()
         elif operation=='scroll':
             scope=SurfaceScrollSequence(recording,image_guard=SurfacePointerGuard(nonce,'native-scroll'),**common)

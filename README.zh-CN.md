@@ -52,6 +52,10 @@ $env:PHONELAB_DATA_ROOT = Join-Path $env:LOCALAPPDATA 'PhoneLab\data'
 pwsh -NoProfile -File .\Start-PhoneLab.ps1
 ```
 
+如需加快 CPU 指针掩码检查，可在虚拟环境中运行
+`python -m pip install -r requirements-vision-fast.txt` 安装固定版本的无界面
+加速依赖。运算结果保持与 Pillow 参考实现一致，不增加 GUI 或改变输入保护。
+
 服务默认只绑定 **本机回环地址**，不会自动开启 LAN 代理。明确请求只读 USB 截图：
 
 ```powershell

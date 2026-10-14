@@ -75,24 +75,39 @@ class _OnePageAction:
                 ('run_id', self.run_id), ('nonce', self.nonce), ('test_id', self.test_id))):
             raise PageScopeError('page session changed')
         selection_deadline = self.clock() + 1.5
+        waiting = False
         while True:
+            self._check_cancelled()
             snapshot = self.observer.snapshot()
             self._check_cancelled()
             meta = snapshot.metadata
             now = self.clock()
+            sequence = meta.get('sequence')
+            received = meta.get('received_monotonic')
             if (meta.get('target') != self.target or meta.get('source') != 'USB_SCREENSHOT'
                 or meta.get('orientation') != 'portrait' or meta.get('fresh') is not True
                 or meta.get('state') != 'fresh' or meta.get('locked') != 'UNKNOWN'
                 or (meta.get('width'), meta.get('height')) != (828, 1792)
-                or type(meta.get('sequence')) is not int or meta['sequence'] <= previous_sequence
-                or type(meta.get('received_monotonic')) not in (int, float)
-                    or not 0 <= now - meta['received_monotonic'] <= 2):
+                or type(sequence) is not int or sequence < previous_sequence
+                or type(received) not in (int, float)
+                    or not 0 <= now - received <= 2):
                 raise PageScopeError('current synthetic page observation unavailable')
-            if now - meta['received_monotonic'] <= self.observation_max_age:
+            if waiting and now >= selection_deadline:
+                raise PageScopeError('new image for bounded processing unavailable')
+            if sequence == previous_sequence:
+                if now >= selection_deadline:
+                    raise PageScopeError('new image for bounded processing unavailable')
+                waiting = True
+                self.sleep(.05)
+                self._check_cancelled()
+                continue
+            if now - received <= self.observation_max_age:
                 break
             if now >= selection_deadline:
                 raise PageScopeError('new image for bounded processing unavailable')
+            waiting = True
             self.sleep(.05)
+            self._check_cancelled()
         state = tracker.observe(snapshot.image_bytes, sequence=meta['sequence'],
                                 received=meta['received_monotonic'], now=now)
         if state['state'] == 'stale_content':

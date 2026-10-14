@@ -1,0 +1,4 @@
+# Optional CPU mask acceleration; install only in the project virtual environment.
+# The Pillow reference path remains available without these packages.
+numpy==2.5.4
+opencv-python-headless==4.13.0.92
