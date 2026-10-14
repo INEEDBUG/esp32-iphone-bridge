@@ -94,6 +94,33 @@ public:
   // remote application acted on it.
   uint32_t mouseSendFailureCount() const { return mouseSendFailureCount_; }
 
+  // Keyboard reports are notifications: a successful local send is not
+  // proof that the remote host consumed the report. Keep release retries
+  // explicit so callers can fail closed after an uncertain key sequence.
+  uint32_t keyboardSendFailureCount() const { return keyboardSendFailureCount_; }
+
+  void requireKeyboardRelease() { keyboardReleasePending_ = true; }
+  bool keyboardReleasePending() const { return keyboardReleasePending_; }
+
+  // Send only an all-zero keyboard report. This API never writes consumer or
+  // mouse reports and never changes pending axis motion.
+  bool retryKeyboardRelease()
+  {
+    if (!keyboardReleasePending_ || !ble_.hidKeyboard().ready())
+    {
+      return false;
+    }
+    const EspBleHidKeyboardReport released = {};
+    if (!ble_.hidKeyboard().sendReport(released))
+    {
+      ++keyboardSendFailureCount_;
+      return false;
+    }
+    lastKeyboardReport_ = released;
+    keyboardReleasePending_ = false;
+    return true;
+  }
+
   // Forget every queued relative axis without producing a HID report. Call
   // this when the control session is disarmed so a later-ready peer cannot
   // receive stale movement.
@@ -138,20 +165,36 @@ public:
 private:
   void writeKeyboard(const KeySet &keys)
   {
-    const HidKeyboardReport report = buildHidKeyboardReport(keys);
-    EspBleHidKeyboardReport bleReport;
-    bleReport.modifiers = report.modifiers;
-    for (size_t i = 0; i < HidKeyboardReport::MaxKeys; ++i)
+    EspBleHidKeyboardReport bleReport = {};
+    if (!keyboardReleasePending_)
     {
-      bleReport.keys[i] = i < report.keyCount ? report.keys[i] : 0;
+      const HidKeyboardReport report = buildHidKeyboardReport(keys);
+      bleReport.modifiers = report.modifiers;
+      for (size_t i = 0; i < HidKeyboardReport::MaxKeys; ++i)
+      {
+        bleReport.keys[i] = i < report.keyCount ? report.keys[i] : 0;
+      }
     }
 
-    if (!keyboardPending_ && memcmp(&bleReport, &lastKeyboardReport_, sizeof(bleReport)) == 0)
+    if (!keyboardReleasePending_ &&
+        memcmp(&bleReport, &lastKeyboardReport_, sizeof(bleReport)) == 0)
     {
       return;
     }
-    lastKeyboardReport_ = bleReport;
-    keyboardPending_ = !ble_.hidKeyboard().sendReport(bleReport);
+    if (ble_.hidKeyboard().sendReport(bleReport))
+    {
+      lastKeyboardReport_ = bleReport;
+      keyboardReleasePending_ = false;
+    }
+    else
+    {
+      ++keyboardSendFailureCount_;
+      const EspBleHidKeyboardReport released = {};
+      if (memcmp(&bleReport, &released, sizeof(bleReport)) == 0)
+      {
+        keyboardReleasePending_ = true;
+      }
+    }
   }
 
   void writeConsumer(const KeySet &keys)
@@ -201,7 +244,8 @@ private:
 
   EspBle &ble_;
   EspBleHidKeyboardReport lastKeyboardReport_;
-  bool keyboardPending_ = false;
+  bool keyboardReleasePending_ = false;
+  uint32_t keyboardSendFailureCount_ = 0;
   uint16_t lastConsumerUsage_ = 0;
   bool consumerPending_ = false;
   uint8_t lastMouseButtons_ = 0;

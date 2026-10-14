@@ -5,6 +5,7 @@ from phonelab.surface_experiments import run_surface_experiment
 
 @pytest.mark.parametrize('operation,arguments',[
     ('backspace',{'expected_text':'test1'}),('type',{'text':'test123'}),
+    ('type-next',{'text':'Test 123','expected_text':'Test 12'}),
 ])
 def test_unverified_text_reference_is_rejected_before_device_access(operation,arguments,monkeypatch):
     import phonelab.surface_experiments as module

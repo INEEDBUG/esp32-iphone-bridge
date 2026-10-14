@@ -18,7 +18,7 @@ DATA = resolve_data_root()
 PRIVATE = DATA / "private"
 OEM = DATA / "oem-backups" / "baseline-20261013-01"
 SIZE = 4 * 1024 * 1024
-FW_SHA = "c701e26b8c051e13b70874ed1eeb29b15a476a6a7a994b25ca8ec4075f355ac7"
+FW_SHA = "ad1835013bcc11f67ab5857aaec6503742a519a8f06d28aa4bda8b9c2e8b493a"
 OEM_SHA = "e6a2a9492d20b17e29f0e517f449577a718c9fec1d09a507c5833869818ac8a5"
 ESPT_VER = "5.3.1"
 

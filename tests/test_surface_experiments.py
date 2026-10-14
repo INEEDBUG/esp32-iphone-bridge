@@ -20,7 +20,11 @@ def test_default_cli_is_preview_and_never_reads_device_or_opens_uart(monkeypatch
     assert 'PREVIEW_ONLY' in capsys.readouterr().out
 
 
-def test_text_candidate_selection_is_active_only_inside_final_input_guard(monkeypatch,tmp_path):
+@pytest.mark.parametrize('operation,arguments,expected',[
+    ('type',{'text':'test123'},''),
+    ('type-next',{'text':'Test 123','expected_text':'Test 12'},'Test 12'),
+])
+def test_text_candidate_selection_is_active_only_inside_final_input_guard(monkeypatch,tmp_path,operation,arguments,expected):
     import json
     import time
     from types import SimpleNamespace
@@ -61,6 +65,7 @@ def test_text_candidate_selection_is_active_only_inside_final_input_guard(monkey
         def __init__(self,observer,**kwargs):
             self.observer=observer;self.guard=kwargs['image_guard'];self.backend_opener=kwargs['backend_opener']
         def type_phrase(self,text):
+            assert self.guard.expected_text==expected
             before=self.observer.snapshot()
             backend=self.backend_opener()
             deadline=time.monotonic()+5;request_deadlines.append(deadline)
@@ -69,9 +74,10 @@ def test_text_candidate_selection_is_active_only_inside_final_input_guard(monkey
             backend.execute(request);backend.close()
             after=self.observer.snapshot()
             return {'before':before,'after':after}
+        def type_next_character(self,text):return self.type_phrase(text)
     monkeypatch.setattr(module,'PageImageLocatedTextExperiment',Scope)
     token=SimpleNamespace(is_set=lambda:False)
-    result=module.run_surface_experiment('type',{'text':'test123'},data_root=tmp_path,
+    result=module.run_surface_experiment(operation,arguments,data_root=tmp_path,
         private_root=tmp_path/'private',stop_token=token)
     assert result['state']=='executed',result
     assert len(selection_calls)==1

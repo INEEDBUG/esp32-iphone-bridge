@@ -53,6 +53,13 @@ class BleOutputSafetyTests(unittest.TestCase):
         self.assertIn("++mouseSendFailureCount_", failure_path)
         self.assertIn("pendingAxis_[static_cast<size_t>(Axis::X)] += report.x", failure_path)
 
+    def test_keyboard_release_retry_and_failure_counter_are_explicit(self):
+        self.assertIn("uint32_t keyboardSendFailureCount() const { return keyboardSendFailureCount_; }",
+                      self.output_class)
+        self.assertIn("void requireKeyboardRelease()", self.output_class)
+        self.assertIn("bool keyboardReleasePending() const", self.output_class)
+        self.assertIn("bool retryKeyboardRelease()", self.output_class)
+
     @unittest.skipUnless(host_cpp_compiler(), "host C++ compiler unavailable")
     def test_native_behavior_distinguishes_readiness_and_drops_discarded_delta(self):
         """Run the production class, not a reimplemented Python model."""
@@ -61,6 +68,7 @@ class BleOutputSafetyTests(unittest.TestCase):
 #include <cstdint>
 #include <cstring>
 #include <cassert>
+#include <vector>
 namespace esp32keybridge {
 enum class Axis : uint8_t { X=0, Y=1, Wheel=2, Pan=3 };
 constexpr size_t kAxisCount=4;
@@ -83,11 +91,18 @@ struct HidMouseReport {
 };
 struct KeySet {};
 struct FakeKeyboard {
-  bool available=true; unsigned sends=0;
+  bool available=true; unsigned sends=0; unsigned outcomeIndex=0;
+  std::vector<bool> outcomes;
+  std::vector<EspBleHidKeyboardReport> reports;
   void configure(const EspBleHidKeyboardConfig &) {}
   template<class F> void onOutputReport(F) {}
   bool ready() const { return available; }
-  bool sendReport(const EspBleHidKeyboardReport &) { ++sends; return available; }
+  bool sendReport(const EspBleHidKeyboardReport &report) {
+    ++sends; reports.push_back(report);
+    if (!available) return false;
+    if (outcomeIndex < outcomes.size()) return outcomes[outcomeIndex++];
+    return true;
+  }
   EspBleHidKeyboardOutputReport ledState() const { return {}; }
 };
 struct FakeConsumer {
@@ -113,7 +128,8 @@ struct OutputAdapter {
   virtual void writeAxisDelta(Axis,int32_t)=0;
 };
 static int32_t nextX=0, nextY=0, nextWheel=0;
-HidKeyboardReport buildHidKeyboardReport(const KeySet &) { return {}; }
+static HidKeyboardReport nextKeyboardReport;
+HidKeyboardReport buildHidKeyboardReport(const KeySet &) { return nextKeyboardReport; }
 HidConsumerReport buildHidConsumerReport(const KeySet &) { return {}; }
 HidMouseReport buildHidMouseReport(const KeySet &) {
   HidMouseReport report; report.x=int8_t(nextX); report.y=int8_t(nextY); report.wheel=int8_t(nextWheel);
@@ -127,6 +143,50 @@ int main() {
   EspBle ble; EspBleHidOutputAdapter output(ble); KeySet keys;
   assert(output.connected());                 // keyboard-ready remains true
   assert(!output.mouseReady());               // mouse report subscription is separate
+
+  // A failed release stays explicitly pending and can be retried as a zero
+  // keyboard report without touching the mouse/axis path.
+  nextKeyboardReport.keyCount=1; nextKeyboardReport.keys[0]=4;
+  output.write(keys);
+  assert(ble.keyboard.reports.size()==1 && ble.keyboard.reports.back().keys[0]==4);
+  ble.keyboard.available=false; nextKeyboardReport=HidKeyboardReport{};
+  output.write(keys);
+  assert(output.keyboardSendFailureCount()==1 && output.keyboardReleasePending());
+  assert(ble.keyboard.reports.size()==2 && ble.keyboard.reports.back().keys[0]==0);
+  unsigned mouseSendsBeforeRetry=ble.mouse.sends;
+  ble.keyboard.available=true;
+  assert(output.retryKeyboardRelease());
+  assert(!output.keyboardReleasePending() && output.keyboardSendFailureCount()==1);
+  assert(ble.keyboard.reports.size()==3 && ble.keyboard.reports.back().modifiers==0
+         && ble.keyboard.reports.back().keys[0]==0);
+  assert(ble.mouse.sends==mouseSendsBeforeRetry);
+
+  // If release is required while a key is held, writes stay zero-only until
+  // an accepted release; repeated failed retries remain pending and counted.
+  nextKeyboardReport.keyCount=1; nextKeyboardReport.keys[0]=7; output.write(keys);
+  unsigned sendsBeforeRequire=ble.keyboard.sends;
+  output.requireKeyboardRelease();
+  assert(output.keyboardReleasePending() && ble.keyboard.sends==sendsBeforeRequire);
+  ble.keyboard.available=false; nextKeyboardReport.keys[0]=8; output.write(keys);
+  assert(output.keyboardReleasePending() && output.keyboardSendFailureCount()==2);
+  assert(ble.keyboard.reports.back().modifiers==0 && ble.keyboard.reports.back().keys[0]==0);
+  ble.keyboard.available=true; ble.keyboard.outcomes={false,false,true};
+  ble.keyboard.outcomeIndex=0;
+  assert(!output.retryKeyboardRelease() && output.keyboardReleasePending());
+  assert(!output.retryKeyboardRelease() && output.keyboardReleasePending());
+  assert(output.keyboardSendFailureCount()==4);
+  assert(output.retryKeyboardRelease() && !output.keyboardReleasePending());
+  assert(ble.keyboard.reports.back().keys[0]==0 && ble.mouse.sends==mouseSendsBeforeRetry);
+
+  // Failed presses count as failures; the successful baseline remains the
+  // only state considered sent, and a later write can succeed without replay.
+  nextKeyboardReport=HidKeyboardReport{}; nextKeyboardReport.keyCount=1;
+  nextKeyboardReport.keys[0]=9; ble.keyboard.available=false; output.write(keys);
+  assert(output.keyboardSendFailureCount()==5);
+  ble.keyboard.available=true; output.write(keys);
+  assert(ble.keyboard.reports.back().keys[0]==9 && output.keyboardSendFailureCount()==5);
+  nextKeyboardReport=HidKeyboardReport{};
+
   nextX=8; nextY=-3; nextWheel=1;
   output.write(keys);                         // failed mouse notification is retained
   assert(ble.mouse.sends==1 && output.mouseSendFailureCount()==1);

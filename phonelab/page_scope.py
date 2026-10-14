@@ -386,6 +386,13 @@ class PageImageLocatedTextExperiment(_PageImageLocatedActionExperiment):
             raise PageScopeError('typing requires an empty field and one approved synthetic phrase')
         return self._execute_one('type', {'text': phrase})
 
+    def type_next_character(self, phrase):
+        if (not isinstance(phrase, str) or phrase not in _SYNTHETIC_TEXT_PHRASES
+                or not phrase.startswith(self.expected_text)
+                or len(self.expected_text) >= len(phrase)):
+            raise PageScopeError('next character requires a strict prefix of one approved synthetic phrase')
+        return self._execute_one('type', {'text': phrase[len(self.expected_text)]})
+
     def backspace(self):
         if not self.expected_text or not _synthetic_text_prefix(self.expected_text):
             raise PageScopeError('backspace requires a nonempty approved synthetic phrase prefix')

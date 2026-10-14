@@ -160,3 +160,46 @@ def test_candidate_selector_rechecks_deadline_after_caret_analysis():
         select_visible_caret_snapshot(lambda:_snapshot(text_image('test123'),clock[0]),image_guard,
             clock=lambda:clock[0],sleep=lambda seconds:clock.__setitem__(0,clock[0]+seconds),
             check_cancelled=lambda:None,request_deadline=85.0)
+
+
+def test_default_candidate_budget_waits_for_delayed_fresh_visible_caret():
+    from phonelab.image_text_guard import select_visible_caret_snapshot
+    clock=[90.0];reads=[];visible_after=1.3
+    def read():
+        reads.append(clock[0])
+        visible=clock[0]-90.0>=visible_after
+        return _snapshot(text_image('test123',caret=visible),clock[0])
+    selected=select_visible_caret_snapshot(read,guard('test123'),clock=lambda:clock[0],
+        sleep=lambda seconds:clock.__setitem__(0,clock[0]+seconds),check_cancelled=lambda:None,
+        request_deadline=95.0)
+    assert selected.metadata['received_monotonic']>=91.3
+    assert len(reads)>12 and len(reads)<=50
+    assert clock[0]<92.5
+
+
+def test_default_candidate_budget_still_stops_at_earlier_original_request_deadline():
+    from phonelab.image_text_guard import select_visible_caret_snapshot
+    clock=[100.0];reads=[]
+    def read():
+        reads.append(clock[0])
+        return _snapshot(text_image('test123',caret=clock[0]-100.0>=1.3),clock[0])
+    with pytest.raises(TimeoutError,match='original input deadline'):
+        select_visible_caret_snapshot(read,guard('test123'),clock=lambda:clock[0],
+            sleep=lambda seconds:clock.__setitem__(0,clock[0]+seconds),check_cancelled=lambda:None,
+            request_deadline=101.0)
+    assert clock[0]<=101.0
+    assert len(reads)<=50
+
+
+def test_default_candidate_budget_remains_finite_for_permanently_missing_caret():
+    from phonelab.image_text_guard import NativeCaretNotVisible,select_visible_caret_snapshot
+    clock=[110.0];reads=[]
+    def read():
+        reads.append(clock[0])
+        return _snapshot(text_image('test123',caret=False),clock[0])
+    with pytest.raises(NativeCaretNotVisible):
+        select_visible_caret_snapshot(read,guard('test123'),clock=lambda:clock[0],
+            sleep=lambda seconds:clock.__setitem__(0,clock[0]+seconds),check_cancelled=lambda:None,
+            request_deadline=120.0)
+    assert len(reads)==50
+    assert clock[0]<=112.5

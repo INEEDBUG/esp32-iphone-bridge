@@ -87,7 +87,9 @@ class FirmwareContractTests(unittest.TestCase):
         release = self.source[self.source.index('void releaseAll('):self.source.index('bool requestIdSeen(')]
         self.assertIn('commandInput.takeAxisDelta', release)
         self.assertIn('hidOutput.discardPendingMouseMotion()', release)
-        self.assertLess(release.index('discardPendingMouseMotion'), release.index('bridge.update'))
+        self.assertNotIn('bridge.update()', release)
+        self.assertIn('hidOutput.requireKeyboardRelease()', release)
+        self.assertIn('serviceKeyboardRelease()', release)
         self.assertIn('transmitRelease && hidOutput.mouseReady()', release)
         self.assertIn('const EspBleHidMouseReport releasedMouse = {}', release)
         self.assertIn('response["mouse_ready"] = hidOutput.mouseReady()', self.source)

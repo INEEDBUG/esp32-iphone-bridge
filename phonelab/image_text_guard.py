@@ -69,13 +69,13 @@ class ImageTextFieldGuard:
 
 def select_visible_caret_snapshot(snapshot_reader, guard, *, clock, sleep,
                                    check_cancelled, request_deadline,
-                                   timeout=1.2, max_candidates=12):
+                                   timeout=2.5, max_candidates=50):
     """Select a fresh image after caret blink-off, waiting only for zero candidates."""
     if (not callable(snapshot_reader) or not callable(clock) or not callable(sleep)
             or not callable(check_cancelled) or type(request_deadline) not in (int,float)
             or not math.isfinite(request_deadline) or type(timeout) not in (int,float)
-            or not 0 < timeout <= 1.2 or type(max_candidates) is not int
-            or not 1 <= max_candidates <= 12):
+            or not 0 < timeout <= 2.5 or type(max_candidates) is not int
+            or not 1 <= max_candidates <= 50):
         raise ValueError('invalid bounded caret observation request')
     deadline=min(clock()+timeout,request_deadline)
     for index in range(max_candidates):

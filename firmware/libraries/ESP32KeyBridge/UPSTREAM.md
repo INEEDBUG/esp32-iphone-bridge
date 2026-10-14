@@ -9,3 +9,10 @@ relative motion when a control session stops. Its MIT notice is retained. The
 lab sketch drains manual-input axes and discards output axes on stop, new
 session, disconnect, expiry, and send failure. Failed reports remain unverified;
 an accepted BLE notification does not prove that Safari handled it.
+
+Keyboard safety changes record notification failures and update the last
+keyboard state only after an accepted send. Explicit pending release suppresses
+key presses and permits zero-only release attempts; firmware schedules a finite
+retry budget even without a serial session. Typing phases are paced while the
+original cancellation/watchdog/TTL checks remain active. These changes are
+prepared locally; device acceptance requires a separately approved deployment.

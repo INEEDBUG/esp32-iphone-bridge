@@ -20,6 +20,11 @@ def validate_surface_request(operation,args):
     valid=False
     if operation=='focus-text':valid=args=={}
     elif operation=='type':valid=set(args)=={'text'} and args['text'] in _SYNTHETIC_TEXT_PHRASES
+    elif operation=='type-next':valid=(set(args)=={'text','expected_text'}
+        and args['text'] in _SYNTHETIC_TEXT_PHRASES
+        and isinstance(args['expected_text'],str)
+        and len(args['expected_text'])<len(args['text'])
+        and args['text'].startswith(args['expected_text']))
     elif operation=='backspace':valid=set(args)=={'expected_text'} and bool(args['expected_text']) and _synthetic_text_prefix(args['expected_text'])
     elif operation=='scroll':valid=(set(args)=={'steps','vertical'} and type(args['steps']) is int and 1<=args['steps']<=32 and type(args['vertical']) is int and args['vertical'] in (-1,1))
     elif operation=='drag':valid=(set(args)=={'dx','dy'} and type(args['dx']) is int and 1<=args['dx']<=128 and type(args['dy']) is int and args['dy']==0)
@@ -31,9 +36,10 @@ def run_surface_experiment(operation,arguments,*,data_root=deploy.DATA,private_r
     arguments=validate_surface_request(operation,arguments)
     if text_reference is not None:
         from .prefix_image_reference import VerifiedPrefixImage
-        if (not isinstance(text_reference,VerifiedPrefixImage) or operation!='backspace'
-                or not text_reference.full_text.startswith(arguments['expected_text'])):
-            raise ValueError('backspace requires a verified prefix reference for this phrase')
+        if (not isinstance(text_reference,VerifiedPrefixImage) or operation not in ('backspace','type-next')
+                or not text_reference.full_text.startswith(arguments['expected_text'])
+                or (operation=='type-next' and text_reference.full_text!=arguments['text'])):
+            raise ValueError('text stepping requires a verified prefix reference for this phrase')
     data=Path(data_root);private=_private_root(Path(private_root) if private_root else data/'private')
     token=stop_token if stop_token is not None else StopStore(private).capture()
     evidence=None;observer=None;scope=None;run_id=None;target=None;nonce=None
@@ -46,7 +52,7 @@ def run_surface_experiment(operation,arguments,*,data_root=deploy.DATA,private_r
                 handle.write(json.dumps({'elapsed':round(time.monotonic()-started,4),'phase':phase,**fields})+'\n')
     try:
         if token.is_set():raise ValueError('stopped generation')
-        if operation in ('type','backspace'):
+        if operation in ('type','type-next','backspace'):
             from .local_english_ocr import prepare_text_ocr
             prepare_text_ocr()  # Startup is outside the original-frame validity window.
         _serial,target=read_target_binding(data)
@@ -118,12 +124,14 @@ def run_surface_experiment(operation,arguments,*,data_root=deploy.DATA,private_r
         if operation=='focus-text':
             scope=PageImageLocatedClickExperiment(recording,image_guard=SurfacePointerGuard(nonce,'text'),**common)
             result=scope.click()
-        elif operation in ('type','backspace'):
+        elif operation in ('type','type-next','backspace'):
             expected='' if operation=='type' else arguments['expected_text']
             text_guard=ImageTextFieldGuard(nonce,expected,
                 ocr_reader=text_reference.ocr_reader if text_reference is not None else None)
             scope=PageImageLocatedTextExperiment(recording,image_guard=text_guard,expected_text=expected,**common)
-            result=scope.type_phrase(arguments['text']) if operation=='type' else scope.backspace()
+            if operation=='type':result=scope.type_phrase(arguments['text'])
+            elif operation=='type-next':result=scope.type_next_character(arguments['text'])
+            else:result=scope.backspace()
         elif operation=='scroll':
             scope=SurfaceScrollSequence(recording,image_guard=SurfacePointerGuard(nonce,'native-scroll'),**common)
             result=scope.scroll(**arguments)
@@ -161,6 +169,7 @@ def main(argv=None):
     sub=parser.add_subparsers(dest='operation',required=True)
     sub.add_parser('focus-text')
     sub.add_parser('type').add_argument('--text',choices=_SYNTHETIC_TEXT_PHRASES,required=True)
+    step=sub.add_parser('type-next');step.add_argument('--text',choices=_SYNTHETIC_TEXT_PHRASES,required=True);step.add_argument('--expected-text',required=True)
     sub.add_parser('backspace').add_argument('--expected-text',required=True)
     scroll=sub.add_parser('scroll');scroll.add_argument('--steps',type=int,required=True);scroll.add_argument('--vertical',type=int,choices=(-1,1),required=True)
     drag=sub.add_parser('drag');drag.add_argument('--dx',type=int,required=True);drag.add_argument('--dy',type=int,default=0)

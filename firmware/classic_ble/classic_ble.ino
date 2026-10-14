@@ -17,6 +17,9 @@ constexpr uint32_t MIN_TTL_MS = 1;
 constexpr uint32_t MAX_TTL_MS = 5000;
 constexpr uint32_t SESSION_WATCHDOG_MS = 1500;
 constexpr uint32_t MOVE_STEP_MS = 5;
+constexpr uint32_t KEYBOARD_PHASE_MS = 30;
+constexpr uint32_t KEYBOARD_RELEASE_RETRY_MS = 30;
+constexpr uint8_t MAX_KEYBOARD_RELEASE_ATTEMPTS = 10;
 constexpr int32_t MOVE_STEP = 10;
 constexpr int HOME_REPORTS = 50;
 
@@ -32,6 +35,10 @@ const char *cancelReason = "cancelled";
 bool lastBleReady = false;
 bool lastMouseReady = false;
 uint32_t mouseFailureAtActionStart = 0;
+uint32_t keyboardFailureAtActionStart = 0;
+uint8_t keyboardReleaseAttemptsRemaining = 0;
+uint32_t nextKeyboardReleaseAt = 0;
+bool keyboardReleaseEpisodeActive = false;
 bool bleStarted = false;
 String seenIds[32];
 size_t seenIdNext = 0;
@@ -251,6 +258,8 @@ void sendReply(const String &id, const String &session, const char *state, const
   response["ble_connected"] = hidOutput.connected();
   response["mouse_ready"] = hidOutput.mouseReady();
   response["mouse_send_failures"] = hidOutput.mouseSendFailureCount();
+  response["keyboard_send_failures"] = hidOutput.keyboardSendFailureCount();
+  response["keyboard_release_pending"] = hidOutput.keyboardReleasePending();
   serializeJson(response, Serial);
   Serial.write('\n');
 }
@@ -265,6 +274,8 @@ bool expired(const Request &request)
   return static_cast<int32_t>(millis() - (request.receivedAt + request.ttlMs)) >= 0;
 }
 
+void serviceKeyboardRelease();
+
 void releaseAll(bool transmitRelease)
 {
   bridge.cancelText();
@@ -274,9 +285,18 @@ void releaseAll(bool transmitRelease)
     commandInput.takeAxisDelta(static_cast<esp32keybridge::Axis>(axis));
   }
   hidOutput.discardPendingMouseMotion();
+  hidOutput.requireKeyboardRelease();
+  if (!keyboardReleaseEpisodeActive)
+  {
+    keyboardReleaseEpisodeActive = true;
+    keyboardReleaseAttemptsRemaining = MAX_KEYBOARD_RELEASE_ATTEMPTS;
+    nextKeyboardReleaseAt = millis();
+  }
   if (transmitRelease && hidOutput.connected())
   {
-    bridge.update();
+    // Clear core/input state above, but do not advance any report/axis phase.
+    // Repeated STOP cannot renew an unresolved release episode's budget.
+    serviceKeyboardRelease();
   }
   // Mouse subscription can survive loss of keyboard readiness. Release its
   // buttons independently with zero axes; never infer receipt on the phone.
@@ -286,6 +306,24 @@ void releaseAll(bool transmitRelease)
     ble.hidMouse().sendReport(releasedMouse);
   }
   hidOutput.discardPendingMouseMotion();
+}
+
+void serviceKeyboardRelease()
+{
+  if (!hidOutput.keyboardReleasePending())
+  {
+    keyboardReleaseEpisodeActive = false;
+    return;
+  }
+  if (keyboardReleaseAttemptsRemaining == 0 ||
+      !hidOutput.connected() || static_cast<int32_t>(millis() - nextKeyboardReleaseAt) < 0)
+  {
+    return;
+  }
+  --keyboardReleaseAttemptsRemaining;
+  hidOutput.retryKeyboardRelease(); // Zero keyboard report only; never queued motion.
+  if (!hidOutput.keyboardReleasePending()) keyboardReleaseEpisodeActive = false;
+  nextKeyboardReleaseAt = millis() + KEYBOARD_RELEASE_RETRY_MS;
 }
 
 bool requestIdSeen(const String &id)
@@ -456,6 +494,11 @@ bool actionCanContinue(const Request &request)
     disarm("ble_disconnected", true);
   }
   lastBleReady = hidOutput.connected();
+  if (hidOutput.keyboardReleasePending() ||
+      hidOutput.keyboardSendFailureCount() != keyboardFailureAtActionStart)
+  {
+    disarm("keyboard_report_failed", true);
+  }
   const bool mouseOperation = request.op == "move" || request.op == "home" ||
       request.op == "click" || request.op == "press" || request.op == "release" || request.op == "scroll";
   if (mouseOperation && !hidOutput.mouseReady())
@@ -548,6 +591,17 @@ bool sendKey(const Request &request)
   return actionCanContinue(request);
 }
 
+bool waitKeyboardPhase(const Request &request)
+{
+  const uint32_t until = millis() + KEYBOARD_PHASE_MS;
+  do
+  {
+    if (!actionCanContinue(request)) return false;
+    delay(1);
+  } while (static_cast<int32_t>(millis() - until) < 0);
+  return actionCanContinue(request);
+}
+
 bool typeText(const Request &request)
 {
   for (size_t i = 0; i < request.text.length(); ++i)
@@ -565,7 +619,9 @@ bool typeText(const Request &request)
         return false;
       }
       bridge.update();
-      delay(1);
+      // Core phases must not flood BLE with press/release transitions at 1ms.
+      // Waiting never extends request TTL, cancellation, or the watchdog.
+      if (!waitKeyboardPhase(request)) return false;
     } while (bridge.typingActive());
   }
   return true;
@@ -620,6 +676,12 @@ void executeRequest(const Request &request)
     sendReply(request.id, request.session, "rejected", "ble_not_ready");
     return;
   }
+  if (hidOutput.keyboardReleasePending())
+  {
+    disarm("keyboard_release_pending", true);
+    sendReply(request.id, request.session, "rejected", "keyboard_release_pending");
+    return;
+  }
   const bool mouseOperation = request.op == "move" || request.op == "home" ||
       request.op == "click" || request.op == "press" || request.op == "release" || request.op == "scroll";
   if (mouseOperation && !hidOutput.mouseReady())
@@ -629,6 +691,7 @@ void executeRequest(const Request &request)
     return;
   }
   mouseFailureAtActionStart = hidOutput.mouseSendFailureCount();
+  keyboardFailureAtActionStart = hidOutput.keyboardSendFailureCount();
 
   cancelRequested = false;
   cancelReason = "cancelled";
@@ -690,6 +753,12 @@ void executeRequest(const Request &request)
     succeeded = sendKey(request);
   }
 
+  if (hidOutput.keyboardReleasePending() ||
+      hidOutput.keyboardSendFailureCount() != keyboardFailureAtActionStart)
+  {
+    disarm("keyboard_report_failed", true);
+    succeeded = false;
+  }
   if (mouseOperation && hidOutput.mouseSendFailureCount() != mouseFailureAtActionStart)
   {
     disarm("mouse_report_failed", true);
@@ -757,6 +826,11 @@ void loop()
     disarm("ble_disconnected", true);
     ble.advertising().start();
   }
+  if (!lastBleReady && ready)
+  {
+    keyboardReleaseEpisodeActive = false; // A fresh link gets one fresh release budget.
+    releaseAll(true); // A new BLE connection receives release, never old input.
+  }
   lastBleReady = ready;
   const bool mouseReady = hidOutput.mouseReady();
   if (lastMouseReady && !mouseReady)
@@ -769,6 +843,9 @@ void loop()
   {
     disarm("session_timeout", true);
   }
+  // This runs even when no serial line/session exists. Failed releases get
+  // at most ten zero-only attempts, then remain pending and block input.
+  serviceKeyboardRelease();
 
   String line;
   const int lineResult = readLine(line);

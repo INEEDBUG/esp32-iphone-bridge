@@ -236,6 +236,60 @@ def test_image_text_type_requires_empty_expected_field_and_exact_allowlisted_phr
     assert not opened and not backend.calls
 
 
+@pytest.mark.parametrize(("expected", "phrase", "next_character"), [
+    ("", "Test 123", "T"),
+    ("Test 12", "Test 123", "3"),
+    ("ASCII symbols: !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"[:-1],
+     "ASCII symbols: !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~", "~"),
+])
+def test_image_text_next_character_dispatches_exactly_one_character(expected, phrase, next_character):
+    guard = TextGuard({"role": "synthetic-text", "focused": True,
+        "caret_at_end": True, "text": expected})
+    experiment, observer, backend, opened = text_setup(expected_text=expected, guard=guard)
+    result = experiment.type_next_character(phrase)
+    assert result["verified"] is False
+    assert opened == [True] and backend.closed == 1 and len(backend.calls) == 1
+    assert backend.calls[0]["op"] == "type"
+    assert backend.calls[0]["args"] == {"text": next_character}
+    assert backend.calls[0]["_dispatch_ttl_seconds"] == 1.0
+
+
+@pytest.mark.parametrize(("expected", "phrase"), [
+    ("", "unapproved"),
+    ("T", "test123"),
+    ("Test 123", "Test 123"),
+])
+def test_image_text_next_character_rejects_unapproved_mismatched_or_complete_before_open(expected, phrase):
+    experiment, observer, backend, opened = text_setup(expected_text=expected)
+    with pytest.raises(PageScopeError):
+        experiment.type_next_character(phrase)
+    assert not opened and not backend.calls
+
+
+def test_image_text_next_character_failed_dispatch_is_one_shot_and_not_replayed():
+    experiment, observer, backend, opened = text_setup(expected_text="Test 12")
+    backend.result = {"state": "unknown"}
+    with pytest.raises(PageScopeError):
+        experiment.type_next_character("Test 123")
+    assert len(backend.calls) == 1 and backend.closed == 1
+    with pytest.raises(PageScopeError):
+        experiment.type_next_character("Test 123")
+    assert len(backend.calls) == 1 and len(opened) == 1
+
+
+@pytest.mark.parametrize("guard_result", [
+    {"role": "synthetic-text", "focused": False, "caret_at_end": True, "text": ""},
+    {"role": "synthetic-text", "focused": True, "caret_at_end": True, "text": "changed"},
+])
+def test_image_text_next_character_rejects_changed_or_unfocused_field(guard_result):
+    guard = TextGuard(guard_result)
+    experiment, observer, backend, opened = text_setup(guard=guard)
+    with pytest.raises(PageScopeError):
+        experiment.type_next_character("Test 123")
+    assert opened == [True] and backend.closed == 1
+    assert backend.calls == [] and len(guard.images) == 1
+
+
 def test_image_text_scope_has_no_default_allowing_location_guard_bypass():
     movement, observer, backend, opened = setup()
     with pytest.raises(TypeError):
