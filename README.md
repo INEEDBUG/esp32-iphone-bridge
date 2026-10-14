@@ -11,7 +11,7 @@ PhoneLab is an experimental Windows lab for observing a real iPhone over USB and
 
 > **Experimental.** Real-device evidence comes from one iPhone 11 on iOS 17.5.1. General phone automation and broad compatibility are still open work.
 
-> **Fresh text samples verified.** The keyboard repair passed a 35-action text/symbol/deletion batch on the lab phone. Broader scrolling and sustained input stability remain open. See [Progress](docs/PROGRESS.md).
+> **Fresh text samples verified.** The keyboard repair passed a 35-action text/symbol/deletion batch on the lab phone. Bidirectional 768-CSS-pixel scrolling and a 904-second restricted wheel loop also passed. See [Progress](docs/PROGRESS.md).
 
 ## How it works
 
@@ -35,12 +35,13 @@ Ordinary startup serves the local interface with the input backend **off**. USB 
 | :--- | :--- |
 | **USB observation** | Real 828 × 1792 screenshots on the lab phone. |
 | **Image-guided click** | Small target samples, checked against trusted browser events and delayed real screenshots. Full 25-target acceptance remains open. |
-| **Small vertical scroll** | A fresh 10-sample alternating batch passed: five in each direction, with matching image displacement and unchanged click counts. A fresh 32-wheel block also matched 96 CSS pixels of native movement to 192 image pixels; broader scrolling remains unverified. |
+| **Vertical scroll** | 768 CSS pixels in each direction matched native positions and real-image displacement; the earlier 10 alternating small samples remain recorded. |
 | **Text / backspace** | The repaired firmware passed 35 actions covering uppercase, mixed case, spaces, digits, `!@#` and character-by-character deletion, with exact image/native-event checks. Earlier failed bursts remain recorded. |
 | **Pointer drag** | Five historical complete samples and five fresh samples after the Safari compatibility fix on the repaired firmware passed image, native-event and visible-counter checks. A preparatory unheld move now synchronizes core state before press. |
+| **Restricted input stability** | 904 seconds, 530 wheels plus 530 guarded unheld moves, 25/25 blocks verified; no observed timeout or BLE disconnect in this run. |
 | **Recovery** | One host-shutdown / board-USB recovery followed by a verified click. Three-round reconnect acceptance remains open. |
 | **Host validation** | Automated guard, protocol, cancellation, export and vision tests. These do not establish device behavior. |
-| **Still in progress** | Broader scrolling, sustained input stability and cross-device support. |
+| **Still in progress** | The full click/fault matrix, three-round reconnect acceptance, cross-device support and longer stability runs. |
 
 The [progress log](docs/PROGRESS.md) retains failed and unknown trials alongside successful samples. A firmware `executed` acknowledgement is transport evidence; it does not prove the intended iOS effect. Browser events also do not independently prove their hardware source.
 
