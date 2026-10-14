@@ -34,9 +34,10 @@ Ordinary startup serves the local interface with the input backend **off**. USB 
 | **USB observation** | Real 828 × 1792 screenshots on the lab phone. |
 | **Image-guided click** | Small target samples, checked against trusted browser events and delayed real screenshots. Full 25-target acceptance remains open. |
 | **Small vertical scroll** | A fresh 10-sample alternating batch passed: five in each direction, with matching image displacement and unchanged click counts. Broader scrolling remains unverified. |
+| **Text / backspace** | One real BLE sample entered `test123`; one backspace produced `test12`. Native browser events, serial records and exact text/caret in real screenshots matched. The full text matrix remains open. |
 | **Recovery** | One host-shutdown / board-USB recovery followed by a verified click. Three-round reconnect acceptance remains open. |
 | **Host validation** | Automated guard, protocol, cancellation, export and vision tests. These do not establish device behavior. |
-| **Still in progress** | Real text entry, deletion, dragging, sustained input stability and cross-device support. |
+| **Still in progress** | Full text/deletion coverage, dragging, broader scrolling, sustained input stability and cross-device support. |
 
 The [progress log](docs/PROGRESS.md) retains failed and unknown trials alongside successful samples. A firmware `executed` acknowledgement is transport evidence; it does not prove the intended iOS effect. Browser events also do not independently prove their hardware source.
 
