@@ -131,4 +131,8 @@ class SurfaceDragGesture(_SurfaceSequence):
     def drag(self,*,dx,dy):
         if (type(dx) is not int or type(dy) is not int or not 1<=dx<=128 or dy!=0):
             raise ValueError('one bounded horizontal synthetic drag required')
-        return self._run([('press',{}),('move',{'dx':dx,'dy':0}),('release',{})],maximum_seconds=5,held=True)
+        # STOP sends zero reports but the deployed core's held-key/cache state
+        # clears on its next update. A newly guarded unheld unit move performs
+        # that update before any press; it cannot replay old cleared axes.
+        return self._run([('move',{'dx':0,'dy':1}),('press',{}),
+            ('move',{'dx':dx,'dy':0}),('release',{})],maximum_seconds=5,held=True)

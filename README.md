@@ -11,7 +11,7 @@ PhoneLab is an experimental Windows lab for observing a real iPhone over USB and
 
 > **Experimental.** Real-device evidence comes from one iPhone 11 on iOS 17.5.1. General phone automation and broad compatibility are still open work.
 
-> **Input currently halted.** A symbol trial exposed a repeating-key fault in the previous firmware. The repair passed host checks and full flash readback; fresh phone acceptance is still pending. See [Progress](docs/PROGRESS.md).
+> **Fresh text samples verified.** The keyboard repair passed a 35-action text/symbol/deletion batch on the lab phone. Broader scrolling and sustained input stability remain open. See [Progress](docs/PROGRESS.md).
 
 ## How it works
 
@@ -36,11 +36,11 @@ Ordinary startup serves the local interface with the input backend **off**. USB 
 | **USB observation** | Real 828 × 1792 screenshots on the lab phone. |
 | **Image-guided click** | Small target samples, checked against trusted browser events and delayed real screenshots. Full 25-target acceptance remains open. |
 | **Small vertical scroll** | A fresh 10-sample alternating batch passed: five in each direction, with matching image displacement and unchanged click counts. Broader scrolling remains unverified. |
-| **Text / backspace** | Lowercase, uppercase and stepped mixed-case/space samples matched exact images and native events; symbol input exposed a repeating-key fault. Live trials are halted pending a verified firmware repair. |
-| **Pointer drag** | Five complete press/move/release samples passed fresh image, native event and visible counter checks; one earlier partial gesture is excluded. |
+| **Text / backspace** | The repaired firmware passed 35 actions covering uppercase, mixed case, spaces, digits, `!@#` and character-by-character deletion, with exact image/native-event checks. Earlier failed bursts remain recorded. |
+| **Pointer drag** | Five historical complete samples and three fresh samples on the repaired firmware passed image, native-event and visible-counter checks. A preparatory unheld move now synchronizes core state before press. |
 | **Recovery** | One host-shutdown / board-USB recovery followed by a verified click. Three-round reconnect acceptance remains open. |
 | **Host validation** | Automated guard, protocol, cancellation, export and vision tests. These do not establish device behavior. |
-| **Still in progress** | Reliable symbols/deletion, broader scrolling, sustained input stability and cross-device support. |
+| **Still in progress** | Broader scrolling, sustained input stability and cross-device support. |
 
 The [progress log](docs/PROGRESS.md) retains failed and unknown trials alongside successful samples. A firmware `executed` acknowledgement is transport evidence; it does not prove the intended iOS effect. Browser events also do not independently prove their hardware source.
 

@@ -58,17 +58,21 @@ def test_scroll_invalid_parameters_never_open_serial(tmp_path,steps,vertical):
 def test_drag_press_move_release_share_session_and_each_recheck_geometry(tmp_path):
     item,backend,guard,_,_=make(tmp_path,'drag')
     item.drag(dx=80,dy=0)
-    assert [r['op'] for r in backend.calls]==['press','move','release']
-    assert guard.stages==['press','move','release']
+    assert [r['op'] for r in backend.calls]==['move','press','move','release']
+    assert guard.stages==['move','press','move','release']
     assert len({r['session'] for r in backend.calls})==1 and backend.closed==1
 
 
 def test_guard_failure_after_press_closes_without_sending_move_or_replaying(tmp_path):
-    item,backend,guard,_,_=make(tmp_path,'drag');guard.fail='move'
+    item,backend,guard,_,_=make(tmp_path,'drag');original=guard.verify
+    def fail_held_move(png,stage):
+        original(png,stage)
+        if stage=='move' and 'press' in guard.stages:raise ValueError('changed held geometry')
+    guard.verify=fail_held_move
     with pytest.raises(Exception):item.drag(dx=80,dy=0)
-    assert [r['op'] for r in backend.calls]==['press'] and backend.closed==1
+    assert [r['op'] for r in backend.calls]==['move','press'] and backend.closed==1
     with pytest.raises(Exception):item.drag(dx=80,dy=0)
-    assert len(backend.calls)==1
+    assert len(backend.calls)==2
 
 
 def test_rejected_scroll_stops_remaining_steps_and_closes(tmp_path):
@@ -77,12 +81,43 @@ def test_rejected_scroll_stops_remaining_steps_and_closes(tmp_path):
     assert len(backend.calls)==2 and backend.closed==1
 
 
+def test_drag_synchronizes_unheld_core_before_press_with_a_fresh_guard(tmp_path):
+    item,backend,guard,_,_=make(tmp_path,'drag')
+    item.drag(dx=80,dy=0)
+    assert backend.calls[0]['op']=='move' and backend.calls[0]['args']=={'dx':0,'dy':1}
+    assert [r['op'] for r in backend.calls]==['move','press','move','release']
+    assert guard.stages==['move','press','move','release']
+    assert len(item.evidence_steps)==4
+    assert len({r['session'] for r in backend.calls})==1
+
+
+def test_cancellation_after_unheld_preparation_never_sends_press(tmp_path):
+    item,backend,_,_,_=make(tmp_path,'drag');execute=backend.execute
+    def cancel_after_first(request):
+        reply=execute(request);StopStore(tmp_path).publish_stop();return reply
+    backend.execute=cancel_after_first
+    with pytest.raises(Exception):item.drag(dx=80,dy=0)
+    assert [r['op'] for r in backend.calls]==['move'] and backend.closed==1
+
+
+def test_preparation_does_not_renew_or_consume_the_held_timer(tmp_path):
+    item,backend,guard,clock,_=make(tmp_path,'drag');original=guard.verify
+    def timed(png,stage):
+        original(png,stage)
+        clock.now += 1.5 if len(guard.stages)==1 else 1.3 if stage=='release' else .9
+    guard.verify=timed
+    with pytest.raises(Exception):item.drag(dx=80,dy=0)
+    # All individual images are younger than2s, overall is under5s, but the
+    # three-second held interval expires before release dispatch.
+    assert [r['op'] for r in backend.calls]==['move','press','move']
+
+
 def test_held_drag_deadline_never_renews_during_validation(tmp_path):
     item,backend,guard,clock,_=make(tmp_path,'drag')
     original=guard.verify
     def slow(png,stage):
         original(png,stage)
-        if stage=='move':clock.now+=2.1
+        if stage=='move' and 'press' in guard.stages:clock.now+=2.1
     guard.verify=slow
     with pytest.raises(Exception):item.drag(dx=80,dy=0)
-    assert [r['op'] for r in backend.calls]==['press'] and backend.closed==1
+    assert [r['op'] for r in backend.calls]==['move','press'] and backend.closed==1
