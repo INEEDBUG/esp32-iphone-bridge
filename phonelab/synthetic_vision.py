@@ -3,7 +3,6 @@
 This reports only an image-space candidate. It never reads DOM events, chooses
 an action, or establishes that a pixel came from hardware input.
 """
-from collections import deque
 from dataclasses import dataclass
 import io
 import math
@@ -16,6 +15,67 @@ from .visual_marker import VisualMarker
 _SIZE = (828, 1792)
 _MAX_PNG_BYTES = 20 * 1024 * 1024
 _MAX_PROFILE_BYTES = 512 * 1024
+_NONZERO_TO_ONE = bytes.maketrans(bytes(range(256)), bytes([0] + [1] * 255))
+
+
+def _connected_components(raw: bytes, width: int, height: int):
+    """Yield 8-connected component area, bounds, and edge contact for an L mask."""
+    data = bytearray(raw.translate(_NONZERO_TO_ONE))
+    cursor = 0
+
+    while True:
+        start = data.find(b"\x01", cursor)
+        if start < 0:
+            break
+        cursor = start + 1
+        y, x = divmod(start, width)
+        left = right = x
+        row_start = y * width
+        while left > 0 and data[row_start + left - 1]:
+            left -= 1
+        while right + 1 < width and data[row_start + right + 1]:
+            right += 1
+        data[row_start + left:row_start + right + 1] = b"\x00" * (right - left + 1)
+
+        area = right - left + 1
+        min_x, max_x = left, right
+        min_y = max_y = y
+        touches_edge = left == 0 or right == width - 1 or y == 0 or y == height - 1
+        runs = [(y, left, right)]
+
+        while runs:
+            current_y, run_left, run_right = runs.pop()
+            for neighbor_y in (current_y - 1, current_y + 1):
+                if not 0 <= neighbor_y < height:
+                    continue
+                neighbor_start = max(0, run_left - 1)
+                neighbor_stop = min(width, run_right + 2)
+                neighbor_row = neighbor_y * width
+                scan = neighbor_row + neighbor_start
+                stop = neighbor_row + neighbor_stop
+                position = data.find(b"\x01", scan, stop)
+                while position >= 0:
+                    neighbor_x = position - neighbor_row
+                    next_left = next_right = neighbor_x
+                    while next_left > 0 and data[neighbor_row + next_left - 1]:
+                        next_left -= 1
+                    while next_right + 1 < width and data[neighbor_row + next_right + 1]:
+                        next_right += 1
+                    data[neighbor_row + next_left:neighbor_row + next_right + 1] = (
+                        b"\x00" * (next_right - next_left + 1)
+                    )
+                    run_area = next_right - next_left + 1
+                    area += run_area
+                    min_x, max_x = min(min_x, next_left), max(max_x, next_right)
+                    min_y, max_y = min(min_y, neighbor_y), max(max_y, neighbor_y)
+                    if (next_left == 0 or next_right == width - 1
+                            or neighbor_y == 0 or neighbor_y == height - 1):
+                        touches_edge = True
+                    runs.append((neighbor_y, next_left, next_right))
+                    scan = neighbor_row + next_right + 2
+                    position = data.find(b"\x01", scan, stop)
+
+        yield area, min_x, min_y, max_x, max_y, touches_edge
 
 
 @dataclass(frozen=True)
@@ -107,39 +167,8 @@ def detect_pointer(png: bytes, *, verified_marker: VisualMarker) -> PointerCandi
             mask = mask.filter(ImageFilter.MinFilter(3))
         for _ in range(5):
             mask = mask.filter(ImageFilter.MaxFilter(3))
-        mask = bytearray(mask.tobytes())
-        seen = bytearray(width * height)
-        for start, active in enumerate(mask):
-            if not active or seen[start]:
-                continue
-            queue = deque((start,))
-            seen[start] = 1
-            min_x = max_x = start % width
-            min_y = max_y = start // width
-            area = 0
-            touches_edge = False
-            while queue:
-                index = queue.popleft()
-                x, y = index % width, index // width
-                area += 1
-                min_x, max_x = min(min_x, x), max(max_x, x)
-                min_y, max_y = min(min_y, y), max(max_y, y)
-                if x == 0 or y == 0 or x == width - 1 or y == height - 1:
-                    touches_edge = True
-                for dy in (-1, 0, 1):
-                    ny = y + dy
-                    if not 0 <= ny < height:
-                        continue
-                    base = ny * width
-                    for dx in (-1, 0, 1):
-                        if dx == 0 and dy == 0:
-                            continue
-                        nx = x + dx
-                        if 0 <= nx < width:
-                            neighbor = base + nx
-                            if mask[neighbor] and not seen[neighbor]:
-                                seen[neighbor] = 1
-                                queue.append(neighbor)
+        for area, min_x, min_y, max_x, max_y, touches_edge in _connected_components(
+                mask.tobytes(), width, height):
             box_w, box_h = max_x - min_x + 1, max_y - min_y + 1
             diameter = (box_w + box_h) / 2
             aspect = min(box_w, box_h) / max(box_w, box_h)

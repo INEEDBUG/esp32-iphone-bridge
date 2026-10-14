@@ -3,6 +3,7 @@ import io
 from PIL import Image, ImageCms, ImageDraw, ImageFont
 import pytest
 
+import phonelab.synthetic_vision as synthetic_vision
 from phonelab.synthetic_vision import detect_pointer
 from phonelab.visual_marker import VisualMarker
 
@@ -166,3 +167,89 @@ def test_neutral_mask_keeps_exact_color_band_and_safe_vertical_boundaries():
         assert [light.getpixel((x, y)) for x in range(len(colors))] == [0, 0, 0, 1, 1, 0, 0, 0]
     for y in (159, 1511):
         assert not any(dark.getpixel((x, y)) or light.getpixel((x, y)) for x in range(len(colors)))
+
+
+def _reference_components(raw, width, height):
+    from collections import deque
+
+    seen = bytearray(width * height)
+    components = []
+    for start, active in enumerate(raw):
+        if not active or seen[start]:
+            continue
+        queue = deque([start])
+        seen[start] = 1
+        min_x = max_x = start % width
+        min_y = max_y = start // width
+        area = 0
+        touches_edge = False
+        while queue:
+            index = queue.popleft()
+            x, y = index % width, index // width
+            area += 1
+            min_x, max_x = min(min_x, x), max(max_x, x)
+            min_y, max_y = min(min_y, y), max(max_y, y)
+            if x == 0 or y == 0 or x == width - 1 or y == height - 1:
+                touches_edge = True
+            for dy in (-1, 0, 1):
+                ny = y + dy
+                if not 0 <= ny < height:
+                    continue
+                for dx in (-1, 0, 1):
+                    nx = x + dx
+                    if (dx == 0 and dy == 0) or not 0 <= nx < width:
+                        continue
+                    neighbor = ny * width + nx
+                    if raw[neighbor] and not seen[neighbor]:
+                        seen[neighbor] = 1
+                        queue.append(neighbor)
+        components.append((area, min_x, min_y, max_x, max_y, touches_edge))
+    return sorted(components)
+
+
+def test_scanline_components_match_8_connected_reference_for_exhaustive_and_random_masks():
+    for bits in range(1 << 9):
+        raw = bytes((bits >> index) & 1 for index in range(9))
+        actual = sorted(synthetic_vision._connected_components(raw, 3, 3))
+        assert actual == _reference_components(raw, 3, 3)
+
+    import random
+
+    fixtures = []
+    # Degenerate row/column dimensions exercise both scan and boundary limits.
+    for width, height in ((1, 1), (1, 29), (31, 1), (2, 23), (27, 2)):
+        rng = random.Random(width * 100 + height)
+        fixtures.append((width, height, bytes(rng.choice((0, 0, 0, 1, 2, 127, 255))
+                                              for _ in range(width * height))))
+
+    # Diagonal-only adjacency and a ring with a hole.
+    diagonal = bytearray(11 * 11)
+    for i in range(11):
+        diagonal[i * 11 + i] = 255
+    fixtures.append((11, 11, bytes(diagonal)))
+    ring = bytearray(13 * 13)
+    for y in range(2, 11):
+        for x in range(2, 11):
+            if x in (2, 10) or y in (2, 10):
+                ring[y * 13 + x] = 1
+    fixtures.append((13, 13, bytes(ring)))
+
+    # A rejected edge-connected field beside a compact component must be fully consumed.
+    mixed = bytearray(40 * 32)
+    for y in range(32):
+        for x in range(22):
+            mixed[y * 40 + x] = 1
+    for y in range(12, 16):
+        for x in range(31, 35):
+            mixed[y * 40 + x] = 2
+    fixtures.append((40, 32, bytes(mixed)))
+
+    for seed in range(100):
+        rng = random.Random(seed)
+        width, height = rng.randint(1, 37), rng.randint(1, 31)
+        raw = bytes(rng.choice((0, 0, 0, 1, 2, 128, 255)) for _ in range(width * height))
+        fixtures.append((width, height, raw))
+
+    for width, height, raw in fixtures:
+        actual = sorted(synthetic_vision._connected_components(raw, width, height))
+        assert actual == _reference_components(raw, width, height)
