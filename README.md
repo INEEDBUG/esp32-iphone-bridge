@@ -15,7 +15,7 @@ The delivery goal is a reusable control terminal: onboard an authorized iPhone, 
 
 > **Fresh text samples verified.** The keyboard repair passed a 35-action text/symbol/deletion batch on the lab phone. Bidirectional 768-CSS-pixel scrolling and a 904-second restricted wheel loop also passed. See [Progress](docs/PROGRESS.md).
 
-> **Resumed — 2026-10-18.** The test page and USB observation are restored. The separately authorized advertising repair passed complete Flash readback and booted; keyboard/mouse readiness and a bounded pointer move have recovered. Home/Tips and reusable ordinary-app control remain unfinished.
+> **Real app opened — 2026-10-18.** ESP32 input returned the phone to Home, swiped to the second page and opened Apple Tips. Independent USB screenshots verified the result. Reusable ordinary-app control and multi-device onboarding remain in development.
 
 ## How it works
 
@@ -44,6 +44,7 @@ Ordinary startup serves the local interface with the input backend **off**. USB 
 | **Pointer drag** | Five historical complete samples and five fresh samples after the Safari compatibility fix on the repaired firmware passed image, native-event and visible-counter checks. A preparatory unheld move now synchronizes core state before press. |
 | **Restricted input stability** | 904 seconds, 530 wheels plus 530 guarded unheld moves, 25/25 blocks verified; no observed timeout or BLE disconnect in this run. |
 | **Recovery** | One host-shutdown / board-USB recovery followed by a verified click. Three-round reconnect acceptance remains open. |
+| **Home → Tips** | ESP32 BLE input opened AssistiveTouch, selected Home, swiped across a reviewed blank strip and clicked the visually identified Tips icon. Fresh USB screenshots verified Home and Tips; this is one bounded native-app workflow. |
 | **Host validation** | Automated guard, protocol, cancellation, export and vision tests. These do not establish device behavior. |
 | **Still in progress** | The full click/fault matrix, three-round reconnect acceptance, cross-device support and longer stability runs. |
 
