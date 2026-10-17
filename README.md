@@ -15,7 +15,7 @@ The delivery goal is a reusable control terminal: onboard an authorized iPhone, 
 
 > **Fresh text samples verified.** The keyboard repair passed a 35-action text/symbol/deletion batch on the lab phone. Bidirectional 768-CSS-pixel scrolling and a 904-second restricted wheel loop also passed. See [Progress](docs/PROGRESS.md).
 
-> **Resumed — 2026-10-18.** The test page and USB observation are restored. A disconnect-advertising repair is built and host-checked, awaiting separate deployment authorization. Current BLE report readiness is unresolved; Home/Tips remains unfinished.
+> **Resumed — 2026-10-18.** The test page and USB observation are restored. The separately authorized advertising repair passed complete Flash readback and booted; keyboard/mouse readiness and a bounded pointer move have recovered. Home/Tips and reusable ordinary-app control remain unfinished.
 
 ## How it works
 

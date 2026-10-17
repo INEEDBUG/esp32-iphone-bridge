@@ -104,6 +104,26 @@ def test_lock_and_attempt_limit_fail_closed(tmp_path):
         deploy._next_attempt(private)
 
 
+def test_fourth_write_requires_exact_supplement_and_never_resets_ledger(tmp_path):
+    approval = {'approved': True, 'max_experimental_writes': 4,
+        'additional_write': {'approved': True, 'previous_limit': 3, 'new_limit': 4,
+            'experimental_sha256': deploy.FW_SHA, 'range': {'address': 0, 'size': deploy.SIZE}}}
+    assert deploy._write_limit(approval) == 4
+    assert deploy._write_limit({'approved': True, 'max_experimental_writes': 3}) == 3
+    for changed in ({}, {'experimental_sha256': '0'*64}, {'previous_limit': 0},
+                    {'range': {'address': 4096, 'size': deploy.SIZE}}, {'approved': False}):
+        altered = json.loads(json.dumps(approval))
+        if changed: altered['additional_write'].update(changed)
+        else: altered.pop('additional_write')
+        with pytest.raises(deploy.DeployError): deploy._write_limit(altered)
+    for limit in (True, 4.0, 5, 100):
+        with pytest.raises(deploy.DeployError): deploy._write_limit({**approval, 'max_experimental_writes': limit})
+    for i in range(1,4): (tmp_path/f'attempt{i:02d}').mkdir()
+    with pytest.raises(deploy.DeployError): deploy._next_attempt(tmp_path)
+    assert deploy._next_attempt(tmp_path, limit=4)[0] == 4
+    with pytest.raises(deploy.DeployError): deploy._next_attempt(tmp_path, limit=4)
+
+
 def test_no_execute_cli_never_invokes_deployment(monkeypatch, capsys):
     monkeypatch.setattr(deploy, "execute", lambda **_: pytest.fail("must not execute"))
     assert deploy.main([]) == 2

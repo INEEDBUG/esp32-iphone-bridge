@@ -18,7 +18,7 @@ DATA = resolve_data_root()
 PRIVATE = DATA / "private"
 OEM = DATA / "oem-backups" / "baseline-20261013-01"
 SIZE = 4 * 1024 * 1024
-FW_SHA = "ad1835013bcc11f67ab5857aaec6503742a519a8f06d28aa4bda8b9c2e8b493a"
+FW_SHA = "9ccfea8f6c5e89c8fee9f07b8a444c2b3784becd098026d78aaab3a51bb3ae7e"
 OEM_SHA = "e6a2a9492d20b17e29f0e517f449577a718c9fec1d09a507c5833869818ac8a5"
 ESPT_VER = "5.3.1"
 
@@ -45,12 +45,25 @@ def _json(path: Path) -> dict:
         raise DeployError("required private metadata is missing or invalid") from exc
 
 
+def _write_limit(approval: dict) -> int:
+    limit = approval.get("max_experimental_writes")
+    if approval.get("approved") is not True or type(limit) is not int or limit not in (3, 4):
+        raise DeployError("explicit deployment approval absent or out of scope")
+    if limit == 4:
+        extra = approval.get("additional_write")
+        if (not isinstance(extra, dict) or extra.get("approved") is not True
+                or extra.get("previous_limit") != 3 or extra.get("new_limit") != 4
+                or extra.get("experimental_sha256") != FW_SHA
+                or extra.get("range") != {"address": 0, "size": SIZE}):
+            raise DeployError("exact fourth-write approval is required")
+    return limit
+
+
 def preflight(data: Path = DATA, private: Path | None = None, image_root: Path = ROOT) -> dict:
     """All disk/approval checks. Safe for tests; opens no port and writes nothing."""
     private = private or data / "private"
     approval = _json(private / "deploy-approval.json")
-    if approval.get("approved") is not True or approval.get("max_experimental_writes") != 3:
-        raise DeployError("explicit deployment approval absent or out of scope")
+    write_limit = _write_limit(approval)
     if approval.get("experimental_sha256") != FW_SHA or approval.get("oem_sha256") != OEM_SHA:
         raise DeployError("approval hashes do not match pinned artifacts")
     image = image_root / "firmware" / "build" / "classic_ble" / "classic_ble.ino.merged.bin"
@@ -89,7 +102,7 @@ def preflight(data: Path = DATA, private: Path | None = None, image_root: Path =
     if chip.get("revision") != 301 or chip.get("jedec") != "0x164046" or "v3.1" not in chip.get("chip", ""):
         raise DeployError("previous ROM chip identification differs")
     return {"image": image, "identity": identity, "attempt_root": private,
-            "identity_ok": True, "oem_ok": True}
+            "identity_ok": True, "oem_ok": True, "write_limit": write_limit}
 
 
 def _acquire_lock(path: Path):
@@ -101,7 +114,9 @@ def _acquire_lock(path: Path):
         raise DeployError("deployment lock exists; no automatic stale-lock recovery") from exc
 
 
-def _next_attempt(private: Path) -> tuple[int, Path]:
+def _next_attempt(private: Path, *, limit: int = 3) -> tuple[int, Path]:
+    if type(limit) is not int or limit not in (3, 4):
+        raise DeployError("deployment attempt limit is out of scope")
     found = []
     for path in private.glob("attempt*"):
         m = re.fullmatch(r"attempt(\d{2})", path.name)
@@ -116,8 +131,8 @@ def _next_attempt(private: Path) -> tuple[int, Path]:
             except Exception as exc:
                 raise DeployError("receipt ledger is invalid; refusing a new write") from exc
     n = max(found, default=0) + 1
-    if n > 3:
-        raise DeployError("three-attempt deployment limit reached")
+    if n > limit:
+        raise DeployError("authorized deployment attempt limit reached")
     path = private / f"attempt{n:02d}"
     path.mkdir()
     return n, path
@@ -176,7 +191,7 @@ def execute(*, boot=False, data: Path = DATA, private: Path | None = None,
         checked = preflight(data, private, image_root)
         if continuity_checker(private, checked['identity']) is not True:
             raise DeployError('USB connection epoch changed or is unavailable; re-identification required')
-        attempt, attempt_dir = _next_attempt(private)
+        attempt, attempt_dir = _next_attempt(private, limit=checked.get("write_limit", 3))
         record = {"attempt": attempt, "state": "started", "time_utc": datetime.now(timezone.utc).isoformat(),
                   "experimental_sha256": FW_SHA, "oem_sha256": OEM_SHA, "boot_requested": bool(boot)}
         _receipt(private, record)  # attempt consumed before any serial connection
