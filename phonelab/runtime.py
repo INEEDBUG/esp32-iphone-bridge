@@ -267,6 +267,17 @@ def probe_unarmed_status(*, data: Path = deploy.DATA, private: Path | None = Non
             result['mouse_ready'] = reply.get('mouse_ready') if type(reply.get('mouse_ready')) is bool else None
             failures = reply.get('mouse_send_failures')
             result['mouse_send_failures'] = failures if type(failures) is int and 0 <= failures <= 0xffffffff else None
+            diagnostics = reply.get('ble_diag')
+            if isinstance(diagnostics, dict):
+                result['keyboard_ready'] = connected
+                for wire_key, key in (('link', 'ble_link_connected'), ('adv', 'advertising'),
+                                      ('af', 'advertising_restart_failed')):
+                    value = diagnostics.get(wire_key)
+                    result[key] = value if type(value) is bool else None
+                for wire_key, key, lower, upper in (('dc', 'disconnect_count', 0, 0xffffffff),
+                                                   ('dr', 'last_disconnect_reason', -0x7fffffff, 0x7fffffff)):
+                    value = diagnostics.get(wire_key)
+                    result[key] = value if type(value) is int and lower <= value <= upper else None
             if reply.get("state") == "rejected" and reply.get("error") == "session_mismatch":
                 result.update(state="unarmed", ble_connected=connected)
             elif reply.get("state") == "executed":

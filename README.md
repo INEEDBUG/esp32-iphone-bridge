@@ -9,11 +9,13 @@
 
 PhoneLab is an experimental Windows lab for observing a real iPhone over USB and testing bounded ESP32 BLE keyboard/mouse input on a synthetic browser page. It connects **screen evidence, a constrained action, and an independently checked result**.
 
+The delivery goal is a reusable control terminal: onboard an authorized iPhone, connect its screen over USB or AirPlay, pair an ESP32 over BLE, then operate ordinary interfaces with clear start, stop and recovery behavior. Device selection and calibration should be reusable instead of hard-coded to the lab phone. This general workflow is not delivered yet; WROOM-32E does not provide native USB HID to a directly attached phone.
+
 > **Experimental.** Real-device evidence comes from one iPhone 11 on iOS 17.5.1. General phone automation and broad compatibility are still open work.
 
 > **Fresh text samples verified.** The keyboard repair passed a 35-action text/symbol/deletion batch on the lab phone. Bidirectional 768-CSS-pixel scrolling and a 904-second restricted wheel loop also passed. See [Progress](docs/PROGRESS.md).
 
-> **Session paused — 2026-10-15.** Input, USB capture and the LAN test service are stopped at the user's request. The Home/Tips demonstration remains unfinished; opening AssistiveTouch does not establish Home navigation or app launch.
+> **Resumed — 2026-10-18.** The test page and USB observation are restored. A disconnect-advertising repair is built and host-checked, awaiting separate deployment authorization. Current BLE report readiness is unresolved; Home/Tips remains unfinished.
 
 ## How it works
 

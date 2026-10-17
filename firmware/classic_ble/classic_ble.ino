@@ -40,6 +40,9 @@ uint8_t keyboardReleaseAttemptsRemaining = 0;
 uint32_t nextKeyboardReleaseAt = 0;
 bool keyboardReleaseEpisodeActive = false;
 bool bleStarted = false;
+int lastDisconnectReason = 0;
+uint32_t disconnectCount = 0;
+bool advertisingRestartFailed = false;
 String seenIds[32];
 size_t seenIdNext = 0;
 size_t seenIdCount = 0;
@@ -256,7 +259,14 @@ void sendReply(const String &id, const String &session, const char *state, const
     response["error"] = error;
   }
   response["ble_connected"] = hidOutput.connected();
+  // Preserve the original report-ready field; expose link state separately.
   response["mouse_ready"] = hidOutput.mouseReady();
+  JsonObject diagnostics = response["ble_diag"].to<JsonObject>();
+  diagnostics["link"] = ble.connectionCount() != 0;
+  diagnostics["adv"] = ble.advertising().isAdvertising();
+  diagnostics["dc"] = disconnectCount;
+  diagnostics["dr"] = lastDisconnectReason;
+  diagnostics["af"] = advertisingRestartFailed;
   response["mouse_send_failures"] = hidOutput.mouseSendFailureCount();
   response["keyboard_send_failures"] = hidOutput.keyboardSendFailureCount();
   response["keyboard_release_pending"] = hidOutput.keyboardReleasePending();
@@ -801,9 +811,13 @@ void setup()
   bleStarted = true;
   ble.advertising().setName(config.deviceName);
   ble.advertising().start();
-  ble.onDisconnected([](const EspBleConnection &)
+  ble.onDisconnected([](const EspBleConnection &connection)
   {
     disarm("ble_disconnected", false);
+    lastDisconnectReason = connection.disconnectReason;
+    ++disconnectCount;
+    // Discovery recovery must never restore a control session or old input.
+    advertisingRestartFailed = !ble.advertising().start();
   });
 }
 

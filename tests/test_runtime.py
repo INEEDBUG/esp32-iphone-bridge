@@ -155,6 +155,32 @@ def test_probe_gate_failure_never_constructs_wire(tmp_path, monkeypatch):
             wire_factory=lambda _: pytest.fail("must not open"))
 
 
+@pytest.mark.parametrize('malformed', [False, True])
+def test_probe_distinguishes_link_from_report_readiness_without_raw_diagnostics(tmp_path, monkeypatch, malformed):
+    private, _, _, preflight, port_finder = fixture(tmp_path, monkeypatch)
+    fields = {'ble_link_connected': True, 'keyboard_ready': False, 'advertising': False,
+              'disconnect_count': 3, 'last_disconnect_reason': 19, 'advertising_restart_failed': False}
+    if malformed: fields = {key: 'PRIVATE' for key in fields}
+    class Wire:
+        def write(self, payload):
+            req = json.loads(payload)
+            self.line = json.dumps({'id': req['id'], 'session': req['session'],
+                'state': 'rejected', 'error': 'session_mismatch',
+                'ble_diag': {'link': fields['ble_link_connected'], 'adv': fields['advertising'],
+                    'dc': fields['disconnect_count'], 'dr': fields['last_disconnect_reason'],
+                    'af': fields['advertising_restart_failed'], 'peerAddress': 'must-not-retain'},
+                'ble_connected': fields['keyboard_ready']}).encode() + b'\n'
+        def readline(self, size=513):
+            line, self.line = getattr(self, 'line', b''), b''
+            return line
+        def close(self): pass
+    result = runtime.probe_unarmed_status(data=tmp_path, private=private, epoch_reader=lambda _: EPOCH,
+        port_finder=port_finder, preflight_fn=preflight, wire_factory=lambda _: Wire())
+    assert result['state'] == 'unarmed'
+    assert {key: result[key] for key in fields} == ({key: None for key in fields} if malformed else fields)
+    assert 'peerAddress' not in result and 'PRIVATE' not in json.dumps(result)
+
+
 def test_explicit_open_passes_only_bound_approval(monkeypatch, tmp_path):
     private, _, digest, preflight, port_finder = fixture(tmp_path, monkeypatch)
     captured = {}

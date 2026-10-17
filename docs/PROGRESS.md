@@ -1,8 +1,17 @@
 # Public progress
 
-**Updated:** 2026-10-15
+**Updated:** 2026-10-18
 
-**State:** experimental; paused at the user's request; not a complete device-control release
+**State:** active development; reconnect repair prepared, not deployed; general control remains unfinished
+
+## Recovery and usable-tool priority — 2026-10-18
+
+- Safari access was restored by restarting the previously stopped loopback service and scoped LAN projection. The user confirmed the page opened, and a real USB image independently matched it. Existing trust and the frozen model/OS were verified; a complete 4 MiB board read matched the deployed firmware outside its mutable NVS partition. No firmware, eFuse or phone-system write occurred.
+- BLE report readiness did not recover. A finite observation through one held-open serial handle recorded 101 unarmed samples without keyboard/mouse readiness and zero HID actions. The user observed no completed pairing prompt or manageable paired entry. This is a current blocker, not a successful reconnect.
+- The sketch disarmed on disconnect but never resumed advertising. The pinned library leaves advertising recovery to the sketch, also documented in the [upstream BLE output guide](https://github.com/tanakamasayuki/ESP32KeyBridge/blob/main/docs/GUIDE_BASICS.md#62-ble-hid-output). The repair disarms first, then attempts advertising once; it never rearms or replays input. A native harness executing the real callback failed before the correction and passed afterward, including advertiser failure. Compact, typed diagnostics distinguish physical link presence from HID readiness and retain a disconnect code without peer identities.
+- The repair builds with the existing pinned toolchain in a separate candidate directory. The deployed image is unchanged; the three-write authorization has been consumed, so a fourth write needs new authorization. The exact pairing failure remains unknown, and advertising recovery alone is not claimed to resolve it. Full host regression passed 624 tests and 66 subtests with one existing Windows symlink-permission skip in 124.51 seconds. The unchanged-behavior test cleanup received a separate affected check.
+- Private navigation preparation now records finite ACK errors and covers unheld two-frame/OCR planning with writer-only pings, joined before the sole-reader confirmation. Original image expiry, dispatch TTL and finite stage limits remain. Eighteen private checks passed within a 45-test affected run; these are preparation results, not Home/Tips device acceptance.
+- Delivery now prioritizes a durable terminal with reusable device onboarding, ordinary-app control and connection recovery. The current fixed-phone/synthetic-page prototype has not delivered general or multi-device control. WROOM-32E supplies BLE input; USB or AirPlay separately supplies screen evidence. No claim of arbitrary model/OS compatibility is made.
 
 ## Session close — 2026-10-15
 
@@ -67,7 +76,7 @@ The separately requested Home/Tips demonstration is unfinished. A private, bound
 - The 22-pixel pointer-disc assumption can be unknown, while the observed lab pointer is about 38 pixels across. Missing labels, unexplained border gaps and ambiguous geometry remain rejections. The two-second frame-age limit has not been extended.
 - Earlier guard validation took about 1.688 seconds in one local run. The newer paired archived-frame result above is likewise specific to its image and host; the two-second source-age limit remains unchanged.
 - Full board-backup restoration has not been tested. Experimental firmware must not be treated as recoverable solely because a backup file exists.
-- The current full host validation is 621 tests plus 66 subtests, with one Windows symlink-creation test skipped, in 99.72 seconds; prior post-pin affected checks also passed. This includes generated local OCR, strict glyph-preserving prefix-reference negatives, pointer-mask parity/fallback, bounded frame/caret selection, surface ambiguity/focus/caret, per-stage guarded sequences, cancellation/no replay, derived-event validation, bilingual publication and existing input-isolation regressions. Host results do not establish real-device effects.
+- The current full host validation is 624 tests plus 66 subtests, with one Windows symlink-creation test skipped, in 124.51 seconds; prior milestone evidence remains above. This includes generated local OCR, strict glyph-preserving prefix-reference negatives, pointer-mask parity/fallback, bounded frame/caret selection, surface ambiguity/focus/caret, per-stage guarded sequences, cancellation/no replay, derived-event validation, bilingual publication, BLE advertising recovery, typed status diagnostics and existing input-isolation regressions. Host results do not establish real-device effects.
 
 ## Reproducing a bounded visual experiment
 
